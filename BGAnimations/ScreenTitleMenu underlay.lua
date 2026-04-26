@@ -217,6 +217,13 @@ t[#t + 1] = Def.Quad {
 	end
 }
 
+t[#t + 1] = LoadActor(THEME:GetPathG("", "logo")) .. {
+	Name = "TitleLogo",
+	InitCommand = function(self)
+		self:xy(150, SCREEN_CENTER_Y):zoomto(220, 220)
+	end
+}
+
 t[#t + 1] = Def.ActorFrame {
 	Name = "TitleQuote",
 	InitCommand = function(self)
