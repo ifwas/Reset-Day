@@ -167,8 +167,10 @@ Wheel.mt = {
                     whee.actor:clearInterval(whee.moveInterval)
                     whee.moveInterval = nil
                     whee.floatingOffset = 0
+                    whee:update()           -- full update (positions + content) once settled
+                else
+                    whee:updatePositions()  -- positions only during animation
                 end
-                whee:update()
             end,
             interval
         )
@@ -225,6 +227,24 @@ Wheel.mt = {
             GAMESTATE:SetCurrentSong(nil)
             GAMESTATE:SetCurrentSteps(PLAYER_1, nil)
             GAMESTATE:SetLastSongGroup(currentItem or "")
+        end
+    end,
+    -- Lightweight update: repositions frames and applies visibility masking,
+    -- but does NOT call frameUpdater. Used during the slide animation so that
+    -- song titles / score text are not re-rendered on every animation tick.
+    updatePositions = function(whee)
+        local numFrames = whee.count
+        local idx = whee.index
+        idx = idx - math.ceil(numFrames / 2)
+        for i = 1, numFrames do
+            local frame = whee.frames[i]
+            local offset = i - math.ceil(numFrames / 2) + whee.floatingOffset
+            if frame then
+                whee.frameTransformer(frame, offset - 1, i, numFrames)
+                local absY = (whee.y or 0) + frame:GetY()
+                frame:visible(absY >= 115)
+            end
+            idx = idx + 1
         end
     end,
     update = function(whee)
