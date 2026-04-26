@@ -158,7 +158,10 @@ Wheel.mt = {
         whee.floatingOffset = num
         local interval = whee.pollingSeconds / 5
         whee.index = getIndexCircularly(whee.items, whee.index + num)
-        whee:updateGameStateFromCurrentItem()
+        -- NOTE: updateGameStateFromCurrentItem is intentionally NOT called here.
+        -- Calling it on every keypress during fast-scroll would blast CurrentStepsChanged
+        -- messages faster than the debounce can suppress them. Instead we call it only
+        -- when the animation settles (matches Til Death / Rebirth behaviour).
         whee.moveInterval =
             whee.actor:setInterval(
             function()
@@ -167,10 +170,11 @@ Wheel.mt = {
                     whee.actor:clearInterval(whee.moveInterval)
                     whee.moveInterval = nil
                     whee.floatingOffset = 0
-                    whee:update()           -- full update (positions + content) once settled
-                else
-                    whee:updatePositions()  -- positions only during animation
+                    -- Now that the wheel has settled, update game state once.
+                    whee:updateGameStateFromCurrentItem()
                 end
+                -- Always call full update every tick so items stay live during animation.
+                whee:update()
             end,
             interval
         )
@@ -227,24 +231,6 @@ Wheel.mt = {
             GAMESTATE:SetCurrentSong(nil)
             GAMESTATE:SetCurrentSteps(PLAYER_1, nil)
             GAMESTATE:SetLastSongGroup(currentItem or "")
-        end
-    end,
-    -- Lightweight update: repositions frames and applies visibility masking,
-    -- but does NOT call frameUpdater. Used during the slide animation so that
-    -- song titles / score text are not re-rendered on every animation tick.
-    updatePositions = function(whee)
-        local numFrames = whee.count
-        local idx = whee.index
-        idx = idx - math.ceil(numFrames / 2)
-        for i = 1, numFrames do
-            local frame = whee.frames[i]
-            local offset = i - math.ceil(numFrames / 2) + whee.floatingOffset
-            if frame then
-                whee.frameTransformer(frame, offset - 1, i, numFrames)
-                local absY = (whee.y or 0) + frame:GetY()
-                frame:visible(absY >= 115)
-            end
-            idx = idx + 1
         end
     end,
     update = function(whee)
