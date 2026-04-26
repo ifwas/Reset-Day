@@ -84,6 +84,54 @@ local function getScoreClosestToRate(song, targetRateValue)
 	return bestScore, bestRateStr
 end
 
+local function getWheelSetting(key, defaultValue)
+	if getMusicWheelDisplaySetting then
+		local value = getMusicWheelDisplaySetting(key)
+		if value ~= nil then
+			return value
+		end
+	end
+	return defaultValue
+end
+
+local function formatWifePercent(score)
+	if not score then return "" end
+	local percent = (score:GetWifeScore() or 0) * 100
+	return string.format(percent >= 99.7 and "%05.4f%%" or "%05.2f%%", percent)
+end
+
+local function formatRelativeScoreTime(score)
+	if not score or not score.GetDate then return "" end
+	local dateStr = score:GetDate()
+	if not dateStr or dateStr == "" then return "" end
+	local y, m, d, h, min, s = dateStr:match("(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)")
+	if not y then return dateStr end
+	local t = os.time({year=y, month=m, day=d, hour=h, min=min, sec=s})
+	local diff = os.time() - t
+	if diff < 60 then return "just now"
+	elseif diff < 3600 then return math.floor(diff/60) .. "m ago"
+	elseif diff < 86400 then return math.floor(diff/3600) .. "h ago"
+	elseif diff < 2592000 then return math.floor(diff/86400) .. "d ago"
+	elseif diff < 31536000 then return math.floor(diff/2592000) .. "mo ago"
+	end
+	return math.floor(diff/31536000) .. "y ago"
+end
+
+local function formatRateAndTimestamp(data)
+	local text = (data.score and data.rate) and ("(" .. data.rate .. ")") or ""
+	if data.showPBTimestamps and data.score then
+		local relativeTime = formatRelativeScoreTime(data.score)
+		if relativeTime ~= "" then
+			if text ~= "" then
+				text = text .. " • " .. relativeTime
+			else
+				text = relativeTime
+			end
+		end
+	end
+	return text
+end
+
 -- Layout properties
 local boxW   = 50
 local boxH   = 31
@@ -120,6 +168,14 @@ return Def.ActorFrame {
 		self:playcommand("RefreshUI")
 	end,
 
+	MusicWheelDisplaySettingsChangedMessageCommand = function(self)
+		self:playcommand("RefreshUI")
+	end,
+
+	MusicWheelDisplayRefreshMessageCommand = function(self)
+		self:playcommand("RefreshUI")
+	end,
+
 	RefreshUICommand = function(self)
 		local score, rate
 		local targetRateValue = getCurRateValue and getCurRateValue() or 1.0
@@ -141,7 +197,9 @@ return Def.ActorFrame {
 			grade = computedGrade,
 			diff  = self.slotDifficulty,
 			mirror = self.slotMirror,
-			fav    = self.slotFav
+			fav    = self.slotFav,
+			showGradesOnly = getWheelSetting("OnlyShowGrades", true),
+			showPBTimestamps = getWheelSetting("ShowPBTimestamps", true)
 		}
 		
 		self:RunCommandsOnChildren(function(child)
@@ -156,7 +214,11 @@ return Def.ActorFrame {
 			self:diffuse(color("#000000")):diffusealpha(0.6)
 		end,
 		RedrawCommand = function(self, data)
-			self:visible(data.grade ~= "Grade_None" and data.grade ~= "Grade_Tier17")
+			if data.showGradesOnly then
+				self:visible(data.grade ~= "Grade_None" and data.grade ~= "Grade_Tier17")
+			else
+				self:visible(data.score ~= nil)
+			end
 		end
 	},
 	LoadFont("Common Normal") .. {
@@ -164,8 +226,11 @@ return Def.ActorFrame {
 			self:xy(gradeX + boxW/2, -8):zoom(0.5):halign(0.5):valign(0.5)
 		end,
 		RedrawCommand = function(self, data)
-			if data.grade == "Grade_None" or data.grade == "Grade_Tier17" then
+			if data.showGradesOnly and (data.grade == "Grade_None" or data.grade == "Grade_Tier17") then
 				self:settext("")
+			elseif not data.showGradesOnly and data.score then
+				self:settext(formatWifePercent(data.score))
+				self:diffuse(getGradeColor(data.grade))
 			else
 				self:settext(THEME:GetString("Grade", ToEnumShortString(data.grade)) or "")
 				self:diffuse(getGradeColor(data.grade))
@@ -178,10 +243,11 @@ return Def.ActorFrame {
 			self:diffuse(color("#00ff00"))
 		end,
 		RedrawCommand = function(self, data)
-			if data.grade == "Grade_None" or data.grade == "Grade_Tier17" then
+			if data.showGradesOnly and (data.grade == "Grade_None" or data.grade == "Grade_Tier17") then
 				self:settext(""); return
 			end
-			self:settext(data.rate and ("(" .. data.rate .. ")") or "")
+			self:settext(formatRateAndTimestamp(data))
+			self:diffuse(data.showPBTimestamps and color("#BBBBBB") or color("#00ff00"))
 		end
 	},
 
@@ -192,9 +258,6 @@ return Def.ActorFrame {
 			self:diffuse(color("#000000")):diffusealpha(0.6)
 		end,
 		RedrawCommand = function(self, data)
-			if data.grade == "Grade_None" or data.grade == "Grade_Tier17" then
-				self:visible(false); return
-			end
 			self:visible(data.score ~= nil)
 		end
 	},
@@ -203,9 +266,6 @@ return Def.ActorFrame {
 			self:xy(clearX + boxW/2, -8):zoom(0.4):halign(0.5):valign(0.5)
 		end,
 		RedrawCommand = function(self, data)
-			if data.grade == "Grade_None" or data.grade == "Grade_Tier17" then
-				self:settext(""); return
-			end
 			if data.score then
 				self:settext(getClearType(data.score, 0))
 				self:diffuse(getClearType(data.score, 2))
@@ -220,10 +280,12 @@ return Def.ActorFrame {
 			self:diffuse(color("#00ff00"))
 		end,
 		RedrawCommand = function(self, data)
-			if data.grade == "Grade_None" or data.grade == "Grade_Tier17" then
-				self:settext(""); return
+			if not data.score then
+				self:settext("")
+				return
 			end
-			self:settext((data.score and data.rate) and ("(" .. data.rate .. ")") or "")
+			self:settext(formatRateAndTimestamp(data))
+			self:diffuse(data.showPBTimestamps and color("#BBBBBB") or color("#00ff00"))
 		end
 	},
 
@@ -242,7 +304,7 @@ return Def.ActorFrame {
 		end
 	},
 	Def.Sprite {
-		InitCommand = function(self) self:xy(gradeX - 16, -12):zoomto(4, 19) end,
+		InitCommand = function(self) self:xy(gradeX - 96, -12):zoomto(4, 19) end,
 		RedrawCommand = function(self, data)
 			if data.mirror then
 				self:Load(THEME:GetPathG("", "mirror")):zoomto(14, 14):visible(true)
@@ -252,7 +314,7 @@ return Def.ActorFrame {
 		end
 	},
 	Def.Sprite {
-		InitCommand = function(self) self:xy(gradeX - 16, 4):zoomto(4, 19) end,
+		InitCommand = function(self) self:xy(gradeX - 96, 4):zoomto(4, 19) end,
 		RedrawCommand = function(self, data)
 			if data.fav then
 				self:Load(THEME:GetPathG("", "favorite")):zoomto(14, 14):visible(true)

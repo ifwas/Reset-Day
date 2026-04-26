@@ -1,9 +1,14 @@
 local AvatarX = SCREEN_WIDTH - 180
 local AvatarY = 17
+local profileDropdownDrawOrder = 10000
 -- Old avatar actor frame.. renamed since much more will be placed here (hopefully?)
 local t =
 	Def.ActorFrame {
 	Name = "PlayerAvatar",
+	BeginCommand = function(self)
+		self:draworder(profileDropdownDrawOrder)
+		self:SortByDrawOrder()
+	end,
 }
 
 local username = ""
@@ -198,7 +203,7 @@ t[#t + 1] = Def.Actor {
 t[#t + 1] = Def.ActorFrame {
 	Name = "Avatar" .. PLAYER_1,
 	BeginCommand = function(self)
-		self:draworder(500)
+		self:draworder(profileDropdownDrawOrder - 20)
 		self:queuecommand("Set")
 	end,
 	SetCommand = function(self)
@@ -266,7 +271,7 @@ t[#t + 1] = Def.ActorFrame {
 	Def.ActorFrame {
 		Name = "LoginButtonFrame",
 		InitCommand = function(self)
-			self:xy(AvatarX + 22, AvatarY):draworder(520)
+			self:xy(AvatarX + 22, AvatarY):draworder(profileDropdownDrawOrder)
 		end,
 		BeginCommand = function(self)
 			SCREENMAN:GetTopScreen():AddInputCallback(function(event)
@@ -410,7 +415,7 @@ t[#t + 1] = Def.ActorFrame {
 		Def.ActorFrame {
 			Name = "ProfileMenu",
 			InitCommand = function(self)
-				self:xy(0, 18):draworder(540)
+				self:xy(0, 18):draworder(profileDropdownDrawOrder + 20)
 			end,
 			SetCommand = function(self)
 				self:visible(profileMenuOpen and DLMAN:IsLoggedIn())

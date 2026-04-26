@@ -55,14 +55,78 @@ local function fillNilTableFieldsFrom(table1, defaultTable)
     end
 end
 
+local function getMusicWheelDisplayText(song, nativeGetter, displayGetter)
+    local ok, value = pcall(function()
+        return song[nativeGetter](song)
+    end)
+    if getMusicWheelDisplaySetting and getMusicWheelDisplaySetting("ShowNativeMetadata") and ok and value ~= nil and value ~= "" then
+        return value
+    end
+    local displayOk, displayValue = pcall(function()
+        return song[displayGetter](song)
+    end)
+    if displayOk and displayValue ~= nil then
+        return displayValue
+    end
+    return ok and value or ""
+end
+
+local function getScoreDateRelative(dateStr)
+    if not dateStr or dateStr == "" then return "" end
+    local y, m, d, h, min, s = dateStr:match("(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)")
+    if not y then return dateStr end
+    local t = os.time({year=y, month=m, day=d, hour=h, min=min, sec=s})
+    local diff = os.time() - t
+    if diff < 60 then return "just now"
+    elseif diff < 3600 then return math.floor(diff/60) .. "m ago"
+    elseif diff < 86400 then return math.floor(diff/3600) .. "h ago"
+    elseif diff < 2592000 then return math.floor(diff/86400) .. "d ago"
+    elseif diff < 31536000 then return math.floor(diff/2592000) .. "mo ago"
+    else return math.floor(diff/31536000) .. "y ago" end
+end
+
+local function getScoresForRateEntry(rateEntry)
+    if not rateEntry then return nil end
+    local ok, scores = pcall(function()
+        return rateEntry:GetScores()
+    end)
+    if ok and scores then
+        return scores
+    end
+    if type(rateEntry) == "table" then
+        return rateEntry
+    end
+    return nil
+end
+
+local function getBestScoreForSteps(steps)
+    if not steps then return nil end
+    local chartKey = steps:GetChartKey()
+    local scoresByRate = SCOREMAN:GetScoresByKey(chartKey)
+    if not scoresByRate then return nil end
+    local bestScore = nil
+    for _, rateEntry in pairs(scoresByRate) do
+        local scores = getScoresForRateEntry(rateEntry)
+        if scores then
+            for _, score in ipairs(scores) do
+                if bestScore == nil or score:GetWifeScore() > bestScore:GetWifeScore() then
+                    bestScore = score
+                end
+            end
+        end
+    end
+    return bestScore
+end
+
 local function dump(o)
     if type(o) == "table" then
         local s = "{ "
         for k, v in pairs(o) do
-            if type(k) ~= "number" then
-                k = '"' .. k .. '"'
+            local key = k
+            if type(key) ~= "number" then
+                key = '"' .. key .. '"'
             end
-            s = s .. "[" .. k .. "] = " .. dump(v) .. ","
+            s = s .. "[" .. key .. "] = " .. dump(v) .. ","
         end
         return s .. "} "
     else
@@ -94,6 +158,7 @@ Wheel.mt = {
         whee.floatingOffset = num
         local interval = whee.pollingSeconds / 5
         whee.index = getIndexCircularly(whee.items, whee.index + num)
+        whee:updateGameStateFromCurrentItem()
         whee.moveInterval =
             whee.actor:setInterval(
             function()
@@ -121,6 +186,46 @@ Wheel.mt = {
     end,
     getCurrentFrame = function(whee)
         return whee:getFrame(whee.index)
+    end,
+    updateGameStateFromCurrentItem = function(whee)
+        local currentItem = whee:getCurrentItem()
+        if currentItem and currentItem.GetAllSteps then
+            GAMESTATE:SetCurrentSong(currentItem)
+            GAMESTATE:SetPreferredSong(currentItem)
+            GAMESTATE:SetLastSongGroup(currentItem:GetGroupName())
+            local currentSteps = GAMESTATE:GetCurrentSteps()
+            local steps = currentItem:GetChartsMatchingFilter()
+            if not steps or #steps == 0 then
+                steps = currentItem:GetAllSteps()
+            end
+            local selectedSteps = nil
+            if currentSteps then
+                for _, step in ipairs(steps) do
+                    if step == currentSteps then
+                        selectedSteps = step
+                        break
+                    end
+                end
+            end
+            if not selectedSteps then
+                local preferredDifficulty = GAMESTATE:GetPreferredDifficulty()
+                local preferredStepsType = GAMESTATE:GetPreferredStepsType()
+                for _, step in ipairs(steps) do
+                    if step:GetDifficulty() == preferredDifficulty and step:GetStepsType() == preferredStepsType then
+                        selectedSteps = step
+                        break
+                    end
+                end
+            end
+            if not selectedSteps then
+                selectedSteps = steps[1]
+            end
+            GAMESTATE:SetCurrentSteps(PLAYER_1, selectedSteps)
+        else
+            GAMESTATE:SetCurrentSong(nil)
+            GAMESTATE:SetCurrentSteps(PLAYER_1, nil)
+            GAMESTATE:SetLastSongGroup(currentItem or "")
+        end
     end,
     update = function(whee)
         local numFrames = whee.count
@@ -563,7 +668,15 @@ local function LegacyParams()
                     x.actor.grades = self
                 end
             },
-            -- ClearType text (right of grade)
+            LoadFont("Common Normal") .. {
+                Name = "Percent",
+                InitCommand = function(self)
+                    self:xy(wheelItemWidth/2 - 120, 0):zoom(0.32):halign(0.5):valign(0.5)
+                end,
+                BeginCommand = function(self)
+                    x.actor.Percent = self
+                end
+            },
             LoadFont("Common Normal") .. {
                 Name = "ClearType",
                 InitCommand = function(self)
@@ -622,10 +735,9 @@ local function LegacyParams()
         return g
     end
     params.songActorUpdater = function(self, song)
-        -- Title
-        self.Title:settext(song:GetDisplayMainTitle())
-        -- Artist + Difficulty on same line
-        local artist = song:GetDisplayArtist()
+        local title = getMusicWheelDisplayText(song, "GetMainTitle", "GetDisplayMainTitle")
+        self.Title:settext(title)
+        local artist = getMusicWheelDisplayText(song, "GetArtist", "GetDisplayArtist")
         local diff = ""
         local steps = GAMESTATE:GetCurrentSteps()
         if steps then
@@ -638,16 +750,25 @@ local function LegacyParams()
         else
             self.Artist:settext(diff)
         end
-        -- Subtitle / chart description
-        local sub = song:GetDisplaySubTitle()
+        local sub = getMusicWheelDisplayText(song, "GetSubTitle", "GetDisplaySubTitle")
+        local bestScore = getBestScoreForSteps(steps)
+        if getMusicWheelDisplaySetting and getMusicWheelDisplaySetting("ShowPBTimestamps") and bestScore and bestScore.GetDate then
+            local relative = getScoreDateRelative(bestScore:GetDate())
+            if relative ~= "" then
+                if sub ~= "" then
+                    sub = sub .. " • PB " .. relative
+                else
+                    sub = "PB " .. relative
+                end
+            end
+        end
         self.Subtitle:settext(sub)
-        -- Pack name on far right
         self.PackName:settext(song:GetGroupName())
 
         self:diffuse(color("#FFFFFF"))
 
-        -- Grade and ClearType
         local grade = song:GetTopGrade(steps, PLAYER_1)
+        local showGradesOnly = not getMusicWheelDisplaySetting or getMusicWheelDisplaySetting("OnlyShowGrades")
         self.grades:playcommand(
             "SetGrade",
             {
@@ -659,30 +780,26 @@ local function LegacyParams()
                 PlayerNumber = PLAYER_1
             }
         )
+        self.grades:visible(showGradesOnly)
+        self.Percent:visible(not showGradesOnly)
 
-        -- ClearType from best score
         if steps then
-            local chartKey = steps:GetChartKey()
-            local scoresByRate = SCOREMAN:GetScoresByKey(chartKey)
-            if scoresByRate then
-                local bestScore = nil
-                for _, scores in pairs(scoresByRate) do
-                    for _, s in ipairs(scores) do
-                        if bestScore == nil or s:GetWifeScore() > bestScore:GetWifeScore() then
-                            bestScore = s
-                        end
-                    end
-                end
-                if bestScore then
+            if bestScore then
+                local wife = bestScore:GetWifeScore() * 100
+                self.Percent:settext(string.format(wife >= 99.7 and "%05.4f%%" or "%05.2f%%", wife))
+                self.Percent:diffuse(getGradeColor(bestScore:GetWifeGrade()))
+                if showGradesOnly then
+                    self.ClearType:settext("")
+                else
                     self.ClearType:settext(getClearTypeFromScore(PLAYER_1, bestScore, 0))
                     self.ClearType:diffuse(getClearTypeFromScore(PLAYER_1, bestScore, 2))
-                else
-                    self.ClearType:settext("")
                 end
             else
+                self.Percent:settext("")
                 self.ClearType:settext("")
             end
         else
+            self.Percent:settext("")
             self.ClearType:settext("")
         end
     end

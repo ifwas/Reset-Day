@@ -1,5 +1,5 @@
 local itsOn = false -- chart preview state
-local stepsdisplayx = SCREEN_WIDTH * 0.56 - 54
+local stepsdisplayx = 120
 local thesteps = {}
 
 local rowwidth = 60
@@ -14,7 +14,7 @@ local displayindexoffset = 0
 local sd = Def.ActorFrame {
 	Name = "StepsDisplay",
 	InitCommand = function(self)
-		self:xy(stepsdisplayx, 68):valign(0)
+		self:xy(stepsdisplayx, 360):valign(0)
 	end,
 	OffCommand = function(self)
 		self:visible(false)
@@ -83,7 +83,7 @@ local sd = Def.ActorFrame {
 		end
 	end,
 	CalcInfoOnMessageCommand = function(self)
-		self:x(20)
+		self:x(110)
 	end,
 	CalcInfoOffMessageCommand = function(self)
 		self:x(stepsdisplayx)

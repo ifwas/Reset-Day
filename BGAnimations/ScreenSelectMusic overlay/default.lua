@@ -1,15 +1,30 @@
 local hoverAlpha = 0.6
 local statsOverlayActive = false
 local statsOverlayInputRedirect = false
+local settingsOverlayActive = false
+local settingsOverlayInputRedirect = false
 local quickMenuActive = false
 local quickMenuInputRedirect = false
 local pendingMenuMusicRestore = false
+local settingsOverlayPanelX = SCREEN_WIDTH - 430
+local settingsOverlayPanelY = 52
+local settingsOverlayPanelWidth = 360
+local settingsOverlayPanelHeight = 208
+local settingsOverlayItemX = settingsOverlayPanelX + 18
+local settingsOverlayItemY = settingsOverlayPanelY + 58
+local settingsOverlayItemWidth = settingsOverlayPanelWidth - 36
+local settingsOverlayItemHeight = 32
+local settingsOverlayItemGap = 12
 local quickMenuPanelX = 34
 local quickMenuPanelY = 50
 local quickMenuPanelWidth = 262
 local quickMenuPanelHeight = 214
 local quickMenuItemX = quickMenuPanelX + 18
 local quickMenuItemY = quickMenuPanelY + 58
+local musicWheelSettingsButtonX = SCREEN_WIDTH - 34
+local musicWheelSettingsButtonY = 100
+local musicWheelSettingsButtonWidth = 24
+local musicWheelSettingsButtonHeight = 24
 local quickMenuItemWidth = quickMenuPanelWidth - 36
 local quickMenuItemHeight = 38
 local quickMenuItemGap = 14
@@ -99,6 +114,11 @@ local overallSubviewButtons = {
 	{tab = overallSubviewTabs.Timeline, left = sessionPanelX + 96, top = sessionPanelY + 40, width = 70, label = "Timeline"},
 	{tab = overallSubviewTabs.BestScores, left = sessionPanelX + 172, top = sessionPanelY + 40, width = 96, label = "Best scores"}
 }
+local musicWheelDisplayOptions = {
+	{key = "OnlyShowGrades", label = "Only show grades:"},
+	{key = "ShowPBTimestamps", label = "Show PB timestamps:"},
+	{key = "ShowNativeMetadata", label = "Show native metadata:"}
+}
 local formatPercent
 local formatRate
 local formatJudge
@@ -106,6 +126,8 @@ local formatChartMeter
 local formatDateKey
 local parseScoreTime
 local getScoreDateParts
+local setSettingsOverlayActive
+local setQuickMenuActive
 
 local function pointInBox(x, y, centerX, centerY, halfWidth, halfHeight)
 	return x >= centerX - halfWidth and x <= centerX + halfWidth and y >= centerY - halfHeight and y <= centerY + halfHeight
@@ -158,6 +180,51 @@ local function getOverallSubviewTabAtPosition(mouseX, mouseY)
 		end
 	end
 	return nil
+end
+
+local function getSettingsOverlayItemTop(index)
+	return settingsOverlayItemY + ((index - 1) * (settingsOverlayItemHeight + settingsOverlayItemGap))
+end
+
+local function pointInSettingsOverlayItem(mouseX, mouseY, index)
+	return pointInRect(mouseX, mouseY, settingsOverlayItemX, getSettingsOverlayItemTop(index), settingsOverlayItemWidth, settingsOverlayItemHeight)
+end
+
+local function pointInMusicWheelSettingsButton(mouseX, mouseY)
+	return pointInRect(
+		mouseX,
+		mouseY,
+		musicWheelSettingsButtonX - (musicWheelSettingsButtonWidth / 2),
+		musicWheelSettingsButtonY - (musicWheelSettingsButtonHeight / 2),
+		musicWheelSettingsButtonWidth,
+		musicWheelSettingsButtonHeight
+	)
+end
+
+local function getMusicWheelDisplayOptionValue(key)
+	if getMusicWheelDisplaySetting then
+		return getMusicWheelDisplaySetting(key)
+	end
+	return false
+end
+
+local function refreshMusicWheelDisplay()
+	local top = SCREENMAN:GetTopScreen()
+	if top and top.GetMusicWheel then
+		local wheel = top:GetMusicWheel()
+		if wheel and wheel.RebuildWheelItems then
+			wheel:RebuildWheelItems()
+		end
+	end
+	MESSAGEMAN:Broadcast("MusicWheelDisplayRefresh")
+end
+
+local function toggleMusicWheelDisplayOption(key)
+	local nextValue = not getMusicWheelDisplayOptionValue(key)
+	if setMusicWheelDisplaySetting then
+		setMusicWheelDisplaySetting(key, nextValue)
+	end
+	refreshMusicWheelDisplay()
 end
 
 local function setOverallSubviewTab(tab)
@@ -471,6 +538,33 @@ local function updateOverallTimelineMaxValue(day, skillsetCount, currentMax)
 	return maxValue
 end
 
+-- Weekly grouping helpers for the Overall timeline graph
+local function getWeekStartTime(year, month, day)
+	local t = os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0})
+	local weekday = tonumber(os.date("%w", t)) -- 0=Sun, 1=Mon, ..., 6=Sat
+	local daysToMonday = (weekday + 6) % 7
+	return t - daysToMonday * 86400
+end
+
+local function formatWeekKey(weekStartT)
+	-- Zero-padded ISO week: "YYYY-WNN" (sorts correctly within a year)
+	return os.date("%Y-W", weekStartT) .. string.format("%02d", tonumber(os.date("%V", weekStartT)))
+end
+
+local function formatWeekLabel(weekStartT)
+	local weekEndT = weekStartT + 6 * 86400
+	local sd = os.date("%d", weekStartT)
+	local sm = os.date("%b", weekStartT)
+	local ed = os.date("%d", weekEndT)
+	local em = os.date("%b", weekEndT)
+	local ey = os.date("%Y", weekEndT)
+	if sm == em then
+		return string.format("%s\xe2\x80\x93%s %s %s", sd, ed, em, ey)
+	else
+		return string.format("%s %s \xe2\x80\x93 %s %s %s", sd, sm, ed, em, ey)
+	end
+end
+
 local function buildOverallTimelineDataFallback(entries)
 	local datedEntries = {}
 	local maxValue = 1
@@ -480,12 +574,13 @@ local function buildOverallTimelineDataFallback(entries)
 			local year, month, day = getScoreDateParts(entry.score)
 			if year and month and day then
 				local scoreTime = parseScoreTime(entry.score) or os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0})
+				local weekStartT = getWeekStartTime(year, month, day)
 				datedEntries[#datedEntries + 1] = {
 					score = entry.score,
-					key = formatDateKey(year, month, day),
-					dayTimestamp = os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0}),
+					key = formatWeekKey(weekStartT),
+					dayTimestamp = weekStartT,
 					scoreTimestamp = scoreTime,
-					label = os.date("%d %b %Y", os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0}))
+					label = formatWeekLabel(weekStartT)
 				}
 			end
 		end
@@ -549,13 +644,14 @@ local function buildOverallTimelineData(entries)
 			local year, month, day = getScoreDateParts(score)
 			if year and month and day then
 				local scoreTime = parseScoreTime(score) or os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0})
+				local weekStartT = getWeekStartTime(year, month, day)
 				datedEntries[#datedEntries + 1] = {
 					score = score,
 					chartKey = entry.chartKey,
-					key = formatDateKey(year, month, day),
-					dayTimestamp = os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0}),
+					key = formatWeekKey(weekStartT),
+					dayTimestamp = weekStartT,
 					scoreTimestamp = scoreTime,
-					label = os.date("%d %b %Y", os.time({year = year, month = month, day = day, hour = 0, min = 0, sec = 0}))
+					label = formatWeekLabel(weekStartT)
 				}
 			end
 		end
@@ -955,6 +1051,9 @@ local function setStatsOverlayActive(active)
 	statsOverlayActive = active
 	setenv("StatsOverlayActive", active)
 	if active then
+		if settingsOverlayActive then
+			setSettingsOverlayActive(false)
+		end
 		selectedYear, selectedMonth, selectedDay = getTodayDateParts()
 		hoveredActivityDay = nil
 		sessionScoreOffset = 0
@@ -984,11 +1083,33 @@ local function setStatsOverlayActive(active)
 	MESSAGEMAN:Broadcast("StatsOverlayStateChanged", {active = active})
 end
 
-local function setQuickMenuActive(active)
+setSettingsOverlayActive = function(active)
+	if settingsOverlayActive == active then return end
+	settingsOverlayActive = active
+	setenv("MusicWheelSettingsOverlayActive", active)
+	if active then
+		if statsOverlayActive then
+			setStatsOverlayActive(false)
+		end
+		if quickMenuActive then
+			setQuickMenuActive(false)
+		end
+		settingsOverlayInputRedirect = SCREENMAN:get_input_redirected(PLAYER_1)
+		SCREENMAN:set_input_redirected(PLAYER_1, true)
+	else
+		SCREENMAN:set_input_redirected(PLAYER_1, settingsOverlayInputRedirect)
+	end
+	MESSAGEMAN:Broadcast("MusicWheelSettingsOverlayStateChanged", {active = active})
+end
+
+setQuickMenuActive = function(active)
 	if quickMenuActive == active then return end
 	quickMenuActive = active
 	setenv("QuickMenuActive", active)
 	if active then
+		if settingsOverlayActive then
+			setSettingsOverlayActive(false)
+		end
 		if statsOverlayActive then
 			setStatsOverlayActive(false)
 		end
@@ -1021,6 +1142,43 @@ end
 
 local function input(event)
 	local deviceButton = event.DeviceInput and event.DeviceInput.button or nil
+	if deviceButton == "DeviceButton_left mouse button" then
+		local mouseX = INPUTFILTER:GetMouseX()
+		local mouseY = INPUTFILTER:GetMouseY()
+		if pointInMusicWheelSettingsButton(mouseX, mouseY) then
+			if event.type == "InputEventType_FirstPress" then
+				MESSAGEMAN:Broadcast("ToggleMusicWheelSettingsOverlay")
+			end
+			return true
+		end
+	end
+	if settingsOverlayActive and event.type == "InputEventType_FirstPress" then
+		if event.button == "Back" or deviceButton == "DeviceButton_right mouse button" then
+			setSettingsOverlayActive(false)
+			return true
+		end
+	end
+	if settingsOverlayActive and deviceButton == "DeviceButton_left mouse button" then
+		if event.type == "InputEventType_FirstPress" then
+			local mouseX = INPUTFILTER:GetMouseX()
+			local mouseY = INPUTFILTER:GetMouseY()
+			local handled = false
+			for index, option in ipairs(musicWheelDisplayOptions) do
+				if pointInSettingsOverlayItem(mouseX, mouseY, index) then
+					toggleMusicWheelDisplayOption(option.key)
+					handled = true
+					break
+				end
+			end
+			if not handled and not pointInRect(mouseX, mouseY, settingsOverlayPanelX, settingsOverlayPanelY, settingsOverlayPanelWidth, settingsOverlayPanelHeight) then
+				setSettingsOverlayActive(false)
+			end
+		end
+		return true
+	end
+	if settingsOverlayActive and deviceButton == "DeviceButton_right mouse button" then
+		return true
+	end
 	if quickMenuActive and event.type == "InputEventType_FirstPress" then
 		if event.button == "Back" or deviceButton == "DeviceButton_right mouse button" then
 			setQuickMenuActive(false)
@@ -1069,7 +1227,12 @@ local function input(event)
 				if selectedTab then
 					setStatsOverlayTab(selectedTab)
 				elseif isStatsOverlayOverallTab() then
-					setOverallSubviewTab(getOverallSubviewTabAtPosition(mouseX, mouseY))
+					local subviewTab = getOverallSubviewTabAtPosition(mouseX, mouseY)
+					if subviewTab then
+						setOverallSubviewTab(subviewTab)
+					elseif pointInRect(mouseX, mouseY, 225, 162, 80, 24) then
+						SCREENMAN:SetNewScreen("ScreenAssetSettings")
+					end
 				elseif isStatsOverlaySessionTab() and pointInRect(mouseX, mouseY, activityPrevButtonX, activityPrevButtonY, activityButtonWidth, activityButtonHeight) then
 					shiftSelectedMonth(-1)
 					sessionScoreOffset = 0
@@ -1673,7 +1836,7 @@ local function overallTimelineXAxisLabel(i)
 				self:halign(0.5)
 			end
 			self:xy(x, timelineGraphTop + timelineGraphHeight + 12)
-			self:settext(os.date("%d %b %y", day.timestamp or os.time()))
+			self:settext(day.label or os.date("%d %b %y", day.timestamp or os.time()))
 		end,
 		StatsOverlayTabChangedMessageCommand = function(self)
 			self:playcommand("Set")
@@ -1746,7 +1909,7 @@ end
 local statsOverlay = Def.ActorFrame {
 	Name = "StatsOverlay",
 	InitCommand = function(self)
-		self:diffusealpha(0):visible(false):draworder(3000)
+		self:diffusealpha(0):visible(false):draworder(9000)
 		self:SetUpdateFunction(function(actor)
 			if not statsOverlayActive then return end
 			if isStatsOverlaySessionTab() then
@@ -2181,8 +2344,39 @@ local statsOverlay = Def.ActorFrame {
 		LoadFont("Common Large") .. {
 			Name = "OverallRating",
 			InitCommand = function(self)
-				self:xy(102, 174):halign(0):zoom(0.5):diffuse(getMainColor("positive"))
+				self:xy(102, 174):halign(0):valign(0.5):zoom(0.5):diffuse(getMainColor("positive"))
 			end
+		},
+		-- Asset Settings button (same row as rating)
+		Def.ActorFrame {
+			Name = "AssetSettingsButton",
+			InitCommand = function(self)
+				self:xy(225, 174)
+			end,
+			UIElements.QuadButton(1, 1) .. {
+				Name = "AssetSettingsBG",
+				InitCommand = function(self)
+					self:halign(0):valign(0.5):zoomto(80, 24)
+					self:diffuse(getMainColor("positive")):diffusealpha(0.18)
+				end,
+				MouseOverCommand = function(self)
+					self:finishtweening():smooth(0.08):diffusealpha(0.38)
+				end,
+				MouseOutCommand = function(self)
+					self:finishtweening():smooth(0.12):diffusealpha(0.18)
+				end,
+				MouseDownCommand = function(self, params)
+					if params.event == "DeviceButton_left mouse button" then
+						SCREENMAN:SetNewScreen("ScreenAssetSettings")
+					end
+				end
+			},
+			LoadFont("Common Normal") .. {
+				InitCommand = function(self)
+					self:xy(40, 0):halign(0.5):valign(0.5):zoom(0.22)
+					self:diffuse(getMainColor("positive")):settext("Asset Settings")
+				end
+			}
 		},
 		LoadFont("Common Normal") .. {
 			Name = "OverallPlayTime",
@@ -2465,6 +2659,69 @@ local function quickMenuItem(index, label)
 	}
 end
 
+local function settingsOverlayItem(index, option)
+	return Def.ActorFrame {
+		Name = "SettingsOverlayItem" .. index,
+		InitCommand = function(self)
+			self:xy(settingsOverlayItemX, getSettingsOverlayItemTop(index))
+		end,
+		SetCommand = function(self)
+			local hovered = settingsOverlayActive and pointInSettingsOverlayItem(INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY(), index)
+			local enabled = getMusicWheelDisplayOptionValue(option.key)
+			self:GetChild("Backing"):diffusealpha(hovered and 0.26 or 0.16)
+			self:GetChild("Label"):diffuse(hovered and getMainColor("positive") or color("#FFFFFF"))
+			self:GetChild("IndicatorOuter"):diffuse(enabled and getMainColor("positive") or color("#DADADA"))
+			self:GetChild("IndicatorFill"):visible(enabled)
+			self:GetChild("IndicatorCheck"):visible(enabled)
+		end,
+		UpdateCommand = function(self)
+			self:playcommand("Set")
+		end,
+		MusicWheelSettingsOverlayStateChangedMessageCommand = function(self)
+			self:playcommand("Set")
+		end,
+		MusicWheelDisplaySettingsChangedMessageCommand = function(self)
+			self:playcommand("Set")
+		end,
+		Def.Quad {
+			Name = "Backing",
+			InitCommand = function(self)
+				self:halign(0):valign(0):zoomto(settingsOverlayItemWidth, settingsOverlayItemHeight):diffuse(color("#FFFFFF")):diffusealpha(0.16)
+			end
+		},
+		LoadFont("Common Large") .. {
+			Name = "Label",
+			InitCommand = function(self)
+				self:xy(12, settingsOverlayItemHeight / 2):halign(0):valign(0.5):zoom(0.32):settext(option.label)
+			end
+		},
+		Def.Quad {
+			Name = "IndicatorOuter",
+			InitCommand = function(self)
+				self:xy(settingsOverlayItemWidth - 28, settingsOverlayItemHeight / 2):zoomto(20, 20):diffuse(color("#DADADA"))
+			end
+		},
+		Def.Quad {
+			Name = "IndicatorInner",
+			InitCommand = function(self)
+				self:xy(settingsOverlayItemWidth - 28, settingsOverlayItemHeight / 2):zoomto(16, 16):diffuse(color("#101010")):diffusealpha(0.95)
+			end
+		},
+		Def.Quad {
+			Name = "IndicatorFill",
+			InitCommand = function(self)
+				self:xy(settingsOverlayItemWidth - 28, settingsOverlayItemHeight / 2):zoomto(12, 12):diffuse(getMainColor("positive")):visible(false)
+			end
+		},
+		LoadFont("Common Large") .. {
+			Name = "IndicatorCheck",
+			InitCommand = function(self)
+				self:xy(settingsOverlayItemWidth - 28, settingsOverlayItemHeight / 2):halign(0.5):valign(0.5):zoom(0.3):settext("✓"):visible(false)
+			end
+		}
+	}
+end
+
 local quickMenu = Def.ActorFrame {
 	Name = "QuickMenu",
 	InitCommand = function(self)
@@ -2522,8 +2779,73 @@ local quickMenu = Def.ActorFrame {
 	quickMenuItem(3, "Key Config")
 }
 
+local settingsOverlay = Def.ActorFrame {
+	Name = "MusicWheelSettingsOverlay",
+	InitCommand = function(self)
+		self:visible(false):diffusealpha(0):draworder(3200)
+		self:SetUpdateFunction(function(actor)
+			if settingsOverlayActive then
+				actor:playcommand("Update")
+			end
+		end)
+	end,
+	MusicWheelSettingsOverlayStateChangedMessageCommand = function(self, params)
+		if params.active then
+			self:visible(true):stoptweening():linear(0.12):diffusealpha(1):queuecommand("Update")
+		else
+			self:stoptweening():linear(0.12):diffusealpha(0):queuecommand("HideIfClosed")
+		end
+	end,
+	HideIfClosedCommand = function(self)
+		if not settingsOverlayActive then
+			self:visible(false)
+		end
+	end,
+	UpdateCommand = function(self)
+		for index = 1, #musicWheelDisplayOptions do
+			self:GetChild("SettingsOverlayItem" .. index):playcommand("Update")
+		end
+	end,
+	Def.Quad {
+		InitCommand = function(self)
+			self:Center():zoomto(SCREEN_WIDTH, SCREEN_HEIGHT):diffuse(color("#000000")):diffusealpha(0.38)
+		end
+	},
+	Def.Quad {
+		InitCommand = function(self)
+			self:xy(settingsOverlayPanelX, settingsOverlayPanelY):halign(0):valign(0):zoomto(settingsOverlayPanelWidth, settingsOverlayPanelHeight):diffuse(color("#101010")):diffusealpha(0.96)
+		end
+	},
+	Def.Quad {
+		InitCommand = function(self)
+			self:xy(settingsOverlayPanelX, settingsOverlayPanelY):halign(0):valign(0):zoomto(settingsOverlayPanelWidth, 34):diffuse(color("#191919")):diffusealpha(0.98)
+		end
+	},
+	Def.Sprite {
+		Texture = THEME:GetPathG("", "Interlude Icons/gear-solid.png"),
+		InitCommand = function(self)
+			self:xy(settingsOverlayPanelX + 18, settingsOverlayPanelY + 17):zoom(0.045):halign(0.5):valign(0.5):diffuse(color("#FFFFFF"))
+		end
+	},
+	LoadFont("Common Large") .. {
+		InitCommand = function(self)
+			self:xy(settingsOverlayPanelX + 34, settingsOverlayPanelY + 17):halign(0):valign(0.5):zoom(0.42):settext("Level select options")
+		end
+	},
+	LoadFont("Common Normal") .. {
+		InitCommand = function(self)
+			self:xy(settingsOverlayPanelX + 18, settingsOverlayPanelY + settingsOverlayPanelHeight - 16):halign(0):valign(0.5):zoom(0.24):diffuse(color("#BBBBBB")):settext("Back / right click to close")
+		end
+	}
+}
+
+for index, option in ipairs(musicWheelDisplayOptions) do
+	settingsOverlay[#settingsOverlay + 1] = settingsOverlayItem(index, option)
+end
+
 local t = Def.ActorFrame {
 	BeginCommand = function(self)
+		self:SortByDrawOrder()
 		local s = SCREENMAN:GetTopScreen()
 		s:AddInputCallback(input)
 		SCREENMAN:set_input_redirected(PLAYER_1, false)
@@ -2546,6 +2868,24 @@ local t = Def.ActorFrame {
 t[#t + 1] = Def.Actor {
 	ToggleMenuMessageCommand = function(self)
 		setQuickMenuActive(not quickMenuActive)
+	end,
+	ToggleMusicWheelSettingsOverlayMessageCommand = function(self)
+		if quickMenuActive then
+			setQuickMenuActive(false)
+		end
+		if statsOverlayActive then
+			setStatsOverlayActive(false)
+		end
+		setSettingsOverlayActive(not settingsOverlayActive)
+	end,
+	SetMusicWheelSettingsOverlayMessageCommand = function(self, params)
+		if params and params.active and quickMenuActive then
+			setQuickMenuActive(false)
+		end
+		if params and params.active and statsOverlayActive then
+			setStatsOverlayActive(false)
+		end
+		setSettingsOverlayActive(params and params.active)
 	end,
 	ToggleStatsOverlayMessageCommand = function(self)
 		if quickMenuActive then
@@ -2591,8 +2931,13 @@ t[#t + 1] = Def.Actor {
 			SCREENMAN:set_input_redirected(PLAYER_1, quickMenuInputRedirect)
 			quickMenuActive = false
 		end
+		if settingsOverlayActive then
+			SCREENMAN:set_input_redirected(PLAYER_1, settingsOverlayInputRedirect)
+			settingsOverlayActive = false
+		end
 		setenv("StatsOverlayActive", false)
 		setenv("QuickMenuActive", false)
+		setenv("MusicWheelSettingsOverlayActive", false)
 		inScreenSelectMusic = nil
 	end,
 }
@@ -2601,6 +2946,8 @@ t[#t + 1] = LoadActor("../_frame")
 t[#t + 1] = LoadActor("../_PlayerInfo")
 
 t[#t + 1] = quickMenu
+
+t[#t + 1] = settingsOverlay
 
 t[#t + 1] = statsOverlay
 

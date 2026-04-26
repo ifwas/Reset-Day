@@ -16,6 +16,11 @@ local defaultConfig = {
 		ShowBanners = true, -- false to turn off banners everywhere
 		LastSongChartKey = "",
 		LastSampleMusicPosition = 0,
+		MusicWheelDisplaySettings = {
+			OnlyShowGrades = true,
+			ShowPBTimestamps = true,
+			ShowNativeMetadata = true,
+		},
 	},
 	NPSDisplay = {
 		MaxWindow = 2,
@@ -37,4 +42,37 @@ function CenteredComboEnabled()
 end
 function BannersEnabled()
 	return themeConfig:get_data().global.ShowBanners
+end
+
+function getMusicWheelDisplaySettings()
+	local globalConfig = themeConfig:get_data().global
+	globalConfig.MusicWheelDisplaySettings = globalConfig.MusicWheelDisplaySettings or {}
+	local settings = globalConfig.MusicWheelDisplaySettings
+	if settings.OnlyShowGrades == nil then settings.OnlyShowGrades = true end
+	if settings.ShowPBTimestamps == nil then settings.ShowPBTimestamps = true end
+	if settings.ShowNativeMetadata == nil then
+		local ok, pref = pcall(function() return PREFSMAN:GetPreference("ShowNativeLanguage") end)
+		settings.ShowNativeMetadata = ok and pref or true
+	end
+	return settings
+end
+
+function getMusicWheelDisplaySetting(key)
+	local settings = getMusicWheelDisplaySettings()
+	return settings[key]
+end
+
+function setMusicWheelDisplaySetting(key, value)
+	local settings = getMusicWheelDisplaySettings()
+	if settings[key] == value then return false end
+	settings[key] = value
+	themeConfig:set_dirty()
+	themeConfig:save()
+	if key == "ShowNativeMetadata" then
+		pcall(function() PREFSMAN:SetPreference("ShowNativeLanguage", value) end)
+		pcall(function() PREFSMAN:SavePreferences() end)
+		MESSAGEMAN:Broadcast("DisplayLanguageChanged")
+	end
+	MESSAGEMAN:Broadcast("MusicWheelDisplaySettingsChanged", {key = key, value = value})
+	return true
 end

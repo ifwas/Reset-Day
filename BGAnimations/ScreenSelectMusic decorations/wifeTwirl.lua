@@ -28,6 +28,16 @@ local pendingPreviewSeekPosition = nil
 local pendingPreviewSeekSong = nil
 
 local interludeIconTargetSize = 48
+local dropdownDrawOrder = 10000
+local bottomButtonY = SCREEN_BOTTOM - 58
+local bottomButtonIconSize = 32
+local bottomButtonIconTextGap = 6
+local bottomButtonPositions = {
+	Collection = SCREEN_WIDTH - 355,
+	Random = SCREEN_WIDTH - 235,
+	Practice = SCREEN_WIDTH - 125,
+	Play = SCREEN_WIDTH - 55,
+}
 
 local itsOn = false
 
@@ -465,6 +475,8 @@ local update = false
 local t = Def.ActorFrame {
 	Name = "wifetwirler",
 	BeginCommand = function(self)
+		self:draworder(dropdownDrawOrder)
+		self:SortByDrawOrder()
 		self:queuecommand("MintyFresh")
 	end,
 	OffCommand = function(self)
@@ -1223,10 +1235,298 @@ end
 
 local prevplayerops = "Main"
 
+local collectionOverlayOpen = false
+local collectionOverlayMode = "main"
+local collectionPlaylistPage = 1
+local collectionPlaylistPageSize = 6
+
 local function openCollectionTab()
 	local tind = getTabIndex()
 	setTabIndex(7)
 	MESSAGEMAN:Broadcast("TabChanged", {from = tind, to = 7})
+end
+
+local function broadcastCollectionOverlayState()
+	MESSAGEMAN:Broadcast("CollectionOverlayStateChanged", {
+		open = collectionOverlayOpen,
+		mode = collectionOverlayMode,
+		page = collectionPlaylistPage,
+	})
+end
+
+local function setCollectionOverlayOpen(open, mode)
+	collectionOverlayOpen = open == true
+	if collectionOverlayOpen then
+		collectionOverlayMode = mode or collectionOverlayMode or "main"
+	else
+		collectionOverlayMode = "main"
+		collectionPlaylistPage = 1
+	end
+	broadcastCollectionOverlayState()
+end
+
+local function toggleCollectionOverlay()
+	if collectionOverlayOpen then
+		setCollectionOverlayOpen(false)
+		return
+	end
+	if not GAMESTATE:GetCurrentSong() or not GAMESTATE:GetCurrentSteps() then
+		ms.ok("No chart selected.")
+		return
+	end
+	setCollectionOverlayOpen(true, "main")
+end
+
+local function getSelectMusicPlaylists()
+	local playlists = SONGMAN:GetPlaylists() or {}
+	table.sort(playlists, function(a, b)
+		local aName = a and a.GetName and a:GetName() or ""
+		local bName = b and b.GetName and b:GetName() or ""
+		return aName:lower() < bName:lower()
+	end)
+	return playlists
+end
+
+local function getCurrentChartKey()
+	local currentSteps = GAMESTATE:GetCurrentSteps()
+	if not currentSteps then return nil end
+	local ok, chartKey = pcall(function() return currentSteps:GetChartKey() end)
+	if ok then
+		return chartKey
+	end
+	return nil
+end
+
+local function findPlaylistByName(name)
+	if not name or name == "" then return nil end
+	for _, playlist in ipairs(getSelectMusicPlaylists()) do
+		if playlist and playlist:GetName() == name then
+			return playlist
+		end
+	end
+	return nil
+end
+
+local function playlistContainsChart(playlist, chartKey)
+	if not playlist or not chartKey then return false, nil end
+	local ok, keys = pcall(function() return playlist:GetChartkeys() end)
+	if not ok or not keys then return false, nil end
+	for i, key in ipairs(keys) do
+		if key == chartKey then
+			return true, i
+		end
+	end
+	return false, nil
+end
+
+local function tryCallMethod(target, methodNames, ...)
+	if not target then return false end
+	for _, methodName in ipairs(methodNames) do
+		local method = target[methodName]
+		if type(method) == "function" then
+			local ok = pcall(method, target, ...)
+			if ok then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function ensurePlaylistExists(name)
+	local playlist = findPlaylistByName(name)
+	if playlist then
+		return true, playlist
+	end
+	local ok = tryCallMethod(SONGMAN, {"CreatePlaylist", "AddPlaylist", "MakePlaylist", "NewPlaylist"}, name)
+	if ok then
+		playlist = findPlaylistByName(name)
+	end
+	return playlist ~= nil, playlist
+end
+
+local function addCurrentChartToPlaylist(name)
+	local chartKey = getCurrentChartKey()
+	local currentSong = GAMESTATE:GetCurrentSong()
+	local currentSteps = GAMESTATE:GetCurrentSteps()
+	if not currentSong or not currentSteps or not chartKey then
+		ms.ok("No chart selected.")
+		return false
+	end
+	local okCreate, playlist = ensurePlaylistExists(name)
+	if not okCreate or not playlist then
+		ms.ok("Could not create or find playlist '" .. tostring(name) .. "'.")
+		return false
+	end
+	local exists = playlistContainsChart(playlist, chartKey)
+	if exists then
+		ms.ok("Chart is already in '" .. name .. "'.")
+		return true
+	end
+	local rate = getCurRateValue and getCurRateValue() or 1
+	local ok = false
+	ok = tryCallMethod(playlist, {"AddChart", "AddChartKey"}, chartKey, rate)
+	if not ok then ok = tryCallMethod(playlist, {"AddChart", "AddChartKey"}, chartKey) end
+	if not ok then ok = tryCallMethod(playlist, {"AddSong"}, currentSong, currentSteps, rate) end
+	if not ok then ok = tryCallMethod(playlist, {"AddSong"}, currentSong, currentSteps) end
+	if not ok then ok = tryCallMethod(playlist, {"AddSteps"}, currentSteps, rate) end
+	if not ok then ok = tryCallMethod(playlist, {"AddSteps"}, currentSteps) end
+	if not ok then
+		ms.ok("Failed to add chart to '" .. name .. "'.")
+		return false
+	end
+	ms.ok("Added chart to '" .. name .. "'.")
+	broadcastCollectionOverlayState()
+	return true
+end
+
+local function removeCurrentChartFromPlaylist(name)
+	local playlist = findPlaylistByName(name)
+	local chartKey = getCurrentChartKey()
+	if not playlist or not chartKey then return false end
+	local exists, index = playlistContainsChart(playlist, chartKey)
+	if not exists or not index then return false end
+	return tryCallMethod(playlist, {"DeleteChart"}, index)
+end
+
+local function isCurrentChartFavorited()
+	local currentSong = GAMESTATE:GetCurrentSong()
+	if currentSong and currentSong.IsFavorited then
+		local ok, result = pcall(function() return currentSong:IsFavorited() end)
+		if ok then
+			return result
+		end
+	end
+	local playlist = findPlaylistByName("Favorites")
+	local chartKey = getCurrentChartKey()
+	local exists = playlistContainsChart(playlist, chartKey)
+	return exists
+end
+
+local function toggleCurrentChartFavorite()
+	local currentSong = GAMESTATE:GetCurrentSong()
+	local desired = not isCurrentChartFavorited()
+	if currentSong then
+		local ok = false
+		if desired then
+			ok = tryCallMethod(currentSong, {"SetFavorited"}, true)
+			if not ok then ok = tryCallMethod(currentSong, {"AddToFavorites", "Favorite", "SetFavorite"}) end
+		else
+			ok = tryCallMethod(currentSong, {"SetFavorited"}, false)
+			if not ok then ok = tryCallMethod(currentSong, {"RemoveFromFavorites", "Unfavorite", "SetFavorite"}, false) end
+		end
+		if ok then
+			ms.ok(desired and "Chart favourited." or "Chart unfavourited.")
+			broadcastCollectionOverlayState()
+			return true
+		end
+	end
+	local okCreate = ensurePlaylistExists("Favorites")
+	if not okCreate then
+		ms.ok("Could not access Favorites.")
+		return false
+	end
+	if desired then
+		local added = addCurrentChartToPlaylist("Favorites")
+		if added then
+			broadcastCollectionOverlayState()
+		end
+		return added
+	end
+	local removed = removeCurrentChartFromPlaylist("Favorites")
+	if removed then
+		ms.ok("Chart unfavourited.")
+		broadcastCollectionOverlayState()
+	else
+		ms.ok("Chart is not in Favorites.")
+	end
+	return removed
+end
+
+local function createPlaylistAndAddCurrentChart()
+	easyInputStringWithFunction("New playlist name:", 64, false, function(answer)
+		if not answer or answer == "" then return end
+		local success = addCurrentChartToPlaylist(answer)
+		if success then
+			collectionOverlayMode = "playlist"
+			broadcastCollectionOverlayState()
+		end
+	end)
+end
+
+local function collectionPlaylistPageCount()
+	return math.max(1, math.ceil(#getSelectMusicPlaylists() / collectionPlaylistPageSize))
+end
+
+local function updateCollectionPlaylistPage(delta)
+	collectionPlaylistPage = clamp(collectionPlaylistPage + delta, 1, collectionPlaylistPageCount())
+	broadcastCollectionOverlayState()
+end
+
+local function collectionPlaylistForRow(row)
+	return getSelectMusicPlaylists()[row + ((collectionPlaylistPage - 1) * collectionPlaylistPageSize)]
+end
+
+local function collectionMenuRow(y, width, labelGetter, mouseDown, textGetter)
+	return Def.ActorFrame {
+		InitCommand = function(self) self:xy(0, y) end,
+		UIElements.QuadButton(1, 1) .. {
+			InitCommand = function(self)
+				self:zoomto(width, 34):halign(0):valign(0):diffuse(color("#1f2833")):diffusealpha(0.94)
+			end,
+			MouseDownCommand = mouseDown,
+			MouseOverCommand = function(self) self:diffusealpha(1) end,
+			MouseOutCommand = function(self) self:diffusealpha(0.94) end,
+		},
+		LoadFont("Common Large") .. {
+			InitCommand = function(self)
+				self:xy(12, 17):halign(0):valign(0.5):zoom(0.3)
+			end,
+			SetCommand = function(self)
+				local label = type(labelGetter) == "function" and labelGetter() or labelGetter
+				self:settext(label or "")
+				self:diffuse(textGetter and textGetter() or color("#FFFFFF"))
+			end,
+			CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			CurrentSongChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			CurrentStepsChangedMessageCommand = function(self) self:queuecommand("Set") end,
+		}
+	}
+end
+
+local function collectionPlaylistRow(row, y)
+	return Def.ActorFrame {
+		InitCommand = function(self) self:xy(0, y) end,
+		collectionMenuRow(0, 320, function()
+			local playlist = collectionPlaylistForRow(row)
+			if not playlist then return "" end
+			local name = playlist:GetName()
+			local exists = playlistContainsChart(playlist, getCurrentChartKey())
+			return exists and (name .. "  ✓") or name
+		end, function(self, params)
+			if params.event == "DeviceButton_left mouse button" then
+				local playlist = collectionPlaylistForRow(row)
+				if playlist then
+					local added = addCurrentChartToPlaylist(playlist:GetName())
+					if added then
+						setCollectionOverlayOpen(false)
+					end
+				end
+			end
+		end, function()
+			local playlist = collectionPlaylistForRow(row)
+			if not playlist then return color("#FFFFFF") end
+			local exists = playlistContainsChart(playlist, getCurrentChartKey())
+			return exists and getMainColor("highlight") or color("#FFFFFF")
+		end) .. {
+			SetCommand = function(self)
+				self:visible(collectionPlaylistForRow(row) ~= nil)
+			end,
+			CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			CurrentSongChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			CurrentStepsChangedMessageCommand = function(self) self:queuecommand("Set") end,
+		}
+	}
 end
 
 local function startSongWithPracticeMode(enabled)
@@ -1419,7 +1719,7 @@ t[#t + 1] = Def.ActorFrame {
 	Def.ActorFrame {
 		Name = "JudgeDropdown",
 		InitCommand = function(self)
-			self:xy(390, SCREEN_BOTTOM - 75):visible(false)
+			self:xy(390, SCREEN_BOTTOM - 75):visible(false):draworder(dropdownDrawOrder)
 		end,
 		JudgeChangedMessageCommand = function(self)
 			self:visible(false)
@@ -1513,13 +1813,13 @@ t[#t + 1] = Def.ActorFrame {
 	UIElements.TextToolTip(1, 1, "Common Normal") .. {
 		Name = "CollectionButton",
 		BeginCommand = function(self)
-			self:xy(SCREEN_WIDTH - 262, SCREEN_BOTTOM - 58):halign(1):zoom(0.5)
+			self:xy(bottomButtonPositions.Collection, bottomButtonY):halign(0):zoom(0.5)
 			self:settext("Collection")
 			self:diffuse(getMainColor("positive"))
 		end,
 		MouseDownCommand = function(self, params)
 			if params.event == "DeviceButton_left mouse button" then
-				openCollectionTab()
+				toggleCollectionOverlay()
 			end
 		end,
 		MouseOverCommand = function(self) self:diffusealpha(hoverAlpha2) end,
@@ -1530,28 +1830,138 @@ t[#t + 1] = Def.ActorFrame {
 		Name = "CollectionIcon",
 		Texture = THEME:GetPathG("", "Interlude Icons/list-solid.png"),
 		InitCommand = function(self)
-			self:xy(SCREEN_WIDTH - 360, SCREEN_BOTTOM - 58):halign(0.5):valign(0.5):diffuse(getMainColor("positive"))
+			self:xy(bottomButtonPositions.Collection - bottomButtonIconTextGap, bottomButtonY):halign(1):valign(0.5):diffuse(getMainColor("positive"))
 		end,
 		OnCommand = function(self)
-			normalizeInterludeIcon(self, 0.4)
+			normalizeInterludeIcon(self, bottomButtonIconSize / interludeIconTargetSize)
 		end,
 		MouseDownCommand = function(self, params)
 			if params.event == "DeviceButton_left mouse button" then
-				openCollectionTab()
+				toggleCollectionOverlay()
 			end
 		end,
 		MouseOverCommand = function(self) self:diffusealpha(hoverAlpha2) end,
 		MouseOutCommand = function(self) self:diffusealpha(1) end,
 	},
 
+	Def.ActorFrame {
+		Name = "CollectionOverlay",
+		InitCommand = function(self)
+			self:xy(SCREEN_WIDTH - 360, SCREEN_BOTTOM - 88):visible(false):draworder(dropdownDrawOrder)
+		end,
+		SetCommand = function(self)
+			self:visible(collectionOverlayOpen and GAMESTATE:GetCurrentSong() ~= nil and GAMESTATE:GetCurrentSteps() ~= nil)
+		end,
+		CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+		CurrentSongChangedMessageCommand = function(self)
+			setCollectionOverlayOpen(false)
+		end,
+		CurrentStepsChangedMessageCommand = function(self)
+			setCollectionOverlayOpen(false)
+		end,
+		TabChangedMessageCommand = function(self)
+			setCollectionOverlayOpen(false)
+		end,
+		Def.Quad {
+			InitCommand = function(self)
+				self:zoomto(320, 244):halign(0):valign(1):diffuse(color("#111111")):diffusealpha(0.95)
+			end,
+			SetCommand = function(self)
+				self:zoomto(320, collectionOverlayMode == "playlist" and 244 or 154)
+			end,
+			CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+		},
+		LoadFont("Common Large") .. {
+			InitCommand = function(self)
+				self:xy(12, -224):halign(0):valign(0.5):zoom(0.34)
+			end,
+			SetCommand = function(self)
+				self:settext(collectionOverlayMode == "playlist" and "Add to collection" or "Chart actions")
+				self:y(collectionOverlayMode == "playlist" and -224 or -134)
+			end,
+			CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+		},
+		Def.ActorFrame {
+			SetCommand = function(self) self:visible(collectionOverlayMode == "main") end,
+			CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			collectionMenuRow(-118, 320, function()
+				return isCurrentChartFavorited() and "Unlike chart  >" or "Like chart  >"
+			end, function(self, params)
+				if params.event == "DeviceButton_left mouse button" then
+					toggleCurrentChartFavorite()
+				end
+			end, function()
+				return isCurrentChartFavorited() and getMainColor("highlight") or color("#FFFFFF")
+			end),
+			collectionMenuRow(-78, 320, "Add to collection  >", function(self, params)
+				if params.event == "DeviceButton_left mouse button" then
+					collectionOverlayMode = "playlist"
+					broadcastCollectionOverlayState()
+				end
+			end),
+			collectionMenuRow(-38, 320, "Practice this chart  >", function(self, params)
+				if params.event == "DeviceButton_left mouse button" and GAMESTATE:GetCurrentSong() then
+					setCollectionOverlayOpen(false)
+					startSongWithPracticeMode(true)
+				end
+			end)
+		},
+		Def.ActorFrame {
+			SetCommand = function(self) self:visible(collectionOverlayMode == "playlist") end,
+			CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			collectionMenuRow(-196, 64, "Back", function(self, params)
+				if params.event == "DeviceButton_left mouse button" then
+					collectionOverlayMode = "main"
+					broadcastCollectionOverlayState()
+				end
+			end),
+			Def.ActorFrame {
+				InitCommand = function(self) self:xy(72, -196) end,
+				collectionMenuRow(0, 248, "New collection", function(self, params)
+					if params.event == "DeviceButton_left mouse button" then
+						createPlaylistAndAddCurrentChart()
+					end
+				end),
+			},
+			collectionMenuRow(-156, 64, "Prev", function(self, params)
+				if params.event == "DeviceButton_left mouse button" then
+					updateCollectionPlaylistPage(-1)
+				end
+			end),
+			Def.ActorFrame {
+				InitCommand = function(self) self:xy(256, -156) end,
+				collectionMenuRow(0, 64, "Next", function(self, params)
+					if params.event == "DeviceButton_left mouse button" then
+						updateCollectionPlaylistPage(1)
+					end
+				end),
+			},
+			LoadFont("Common Large") .. {
+				InitCommand = function(self)
+					self:xy(160, -139):halign(0.5):valign(0.5):zoom(0.24)
+				end,
+				SetCommand = function(self)
+					self:settext(string.format("%d / %d", collectionPlaylistPage, collectionPlaylistPageCount()))
+				end,
+				CollectionOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
+			},
+			collectionPlaylistRow(1, -112),
+			collectionPlaylistRow(2, -74),
+			collectionPlaylistRow(3, -36),
+			collectionPlaylistRow(4, 2),
+			collectionPlaylistRow(5, 40),
+			collectionPlaylistRow(6, 78),
+		}
+	},
+
 	Def.Sprite {
 		Name = "RandomIcon",
 		Texture = THEME:GetPathG("", "Interlude Icons/shuffle-solid.png"),
 		InitCommand = function(self)
-			self:xy(SCREEN_WIDTH - 250, SCREEN_BOTTOM - 58):halign(0.5):valign(0.5):diffuse(getMainColor("positive"))
+			self:xy(bottomButtonPositions.Random - bottomButtonIconTextGap, bottomButtonY):halign(1):valign(0.5):diffuse(getMainColor("positive"))
 		end,
 		OnCommand = function(self)
-			normalizeInterludeIcon(self, 0.4)
+			normalizeInterludeIcon(self, bottomButtonIconSize / interludeIconTargetSize)
 		end,
 		MouseDownCommand = function(self, params)
 			if params.event == "DeviceButton_left mouse button" and SelectRandomSong then
@@ -1565,7 +1975,7 @@ t[#t + 1] = Def.ActorFrame {
 	UIElements.TextToolTip(1, 1, "Common Normal") .. {
 		Name = "RandomButton",
 		BeginCommand = function(self)
-			self:xy(SCREEN_WIDTH - 162, SCREEN_BOTTOM - 58):halign(1):zoom(0.5)
+			self:xy(bottomButtonPositions.Random, bottomButtonY):halign(0):zoom(0.5)
 			self:settext("Random")
 			self:diffuse(getMainColor("positive"))
 		end,
@@ -1581,9 +1991,27 @@ t[#t + 1] = Def.ActorFrame {
 	UIElements.TextToolTip(1, 1, "Common Normal") .. {
 		Name = "PracticeButton",
 		BeginCommand = function(self)
-			self:xy(SCREEN_WIDTH - 90, SCREEN_BOTTOM - 58):halign(1):zoom(0.5)
-			self:settext("◎ Practice")
+			self:xy(bottomButtonPositions.Practice, bottomButtonY):halign(0):zoom(0.5)
+			self:settext("Practice")
 			self:diffuse(getMainColor("positive"))
+		end,
+		MouseDownCommand = function(self, params)
+			if params.event == "DeviceButton_left mouse button" and song then
+				startSongWithPracticeMode(true)
+			end
+		end,
+		MouseOverCommand = function(self) self:diffusealpha(hoverAlpha2) end,
+		MouseOutCommand = function(self) self:diffusealpha(1) end,
+	},
+
+	Def.Sprite {
+		Name = "PracticeIcon",
+		Texture = THEME:GetPathG("", "Interlude Icons/stopwatch-solid.png"),
+		InitCommand = function(self)
+			self:xy(bottomButtonPositions.Practice - bottomButtonIconTextGap, bottomButtonY):halign(1):valign(0.5):diffuse(getMainColor("positive"))
+		end,
+		OnCommand = function(self)
+			normalizeInterludeIcon(self, bottomButtonIconSize / interludeIconTargetSize)
 		end,
 		MouseDownCommand = function(self, params)
 			if params.event == "DeviceButton_left mouse button" and song then
@@ -1596,13 +2024,30 @@ t[#t + 1] = Def.ActorFrame {
 
 
 
-
 	UIElements.TextToolTip(1, 1, "Common Normal") .. {
 		Name = "PlayButton",
 		BeginCommand = function(self)
-			self:xy(SCREEN_WIDTH - 20, SCREEN_BOTTOM - 58):halign(1):zoom(0.7)
-			self:settext("▶ Play")
+			self:xy(bottomButtonPositions.Play, bottomButtonY):halign(0):zoom(0.7)
+			self:settext("Play")
 			self:diffuse(getMainColor("positive"))
+		end,
+		MouseDownCommand = function(self, params)
+			if params.event == "DeviceButton_left mouse button" then
+				startSongWithPracticeMode(false)
+			end
+		end,
+		MouseOverCommand = function(self) self:diffusealpha(hoverAlpha2) end,
+		MouseOutCommand = function(self) self:diffusealpha(1) end,
+	},
+
+	Def.Sprite {
+		Name = "PlayIcon",
+		Texture = THEME:GetPathG("", "Interlude Icons/play-solid.png"),
+		InitCommand = function(self)
+			self:xy(bottomButtonPositions.Play - bottomButtonIconTextGap, bottomButtonY):halign(1):valign(0.5):diffuse(getMainColor("positive"))
+		end,
+		OnCommand = function(self)
+			normalizeInterludeIcon(self, bottomButtonIconSize / interludeIconTargetSize)
 		end,
 		MouseDownCommand = function(self, params)
 			if params.event == "DeviceButton_left mouse button" then

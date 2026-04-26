@@ -17,7 +17,7 @@ t[#t + 1] = Def.ActorMultiVertex {
 		self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):zoom(0)
 	end,
 	OnCommand = function(self)
-		self:sleep(0.1):linear(0.1):zoom(SCREEN_HEIGHT * 1.5)
+		self:sleep(0.1):linear(0.1):zoom(SCREEN_WIDTH + SCREEN_HEIGHT)
 	end
 }
 
