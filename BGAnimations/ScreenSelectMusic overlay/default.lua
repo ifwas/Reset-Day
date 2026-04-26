@@ -1909,7 +1909,7 @@ end
 local statsOverlay = Def.ActorFrame {
 	Name = "StatsOverlay",
 	InitCommand = function(self)
-		self:diffusealpha(0):visible(false):draworder(9000)
+		self:diffusealpha(0):visible(false):draworder(11000)
 		self:SetUpdateFunction(function(actor)
 			if not statsOverlayActive then return end
 			if isStatsOverlaySessionTab() then

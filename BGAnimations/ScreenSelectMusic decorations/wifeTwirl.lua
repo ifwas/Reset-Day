@@ -726,7 +726,13 @@ t[#t + 1] = Def.ActorFrame {
 t[#t + 1] = Def.ActorFrame {
 	Name = "InfoDisplayPanel",
 	InitCommand = function(self)
-		self:xy(frameX, frameY + 30)
+		self:xy(frameX, frameY + 30):queuecommand("Set")
+	end,
+	SetCommand = function(self)
+		self:visible(not getenv("StatsOverlayActive"))
+	end,
+	StatsOverlayStateChangedMessageCommand = function(self)
+		self:queuecommand("Set")
 	end,
 
 	-- ROW 1: Colored status boxes
@@ -1576,6 +1582,15 @@ end
 
 t[#t + 1] = Def.ActorFrame {
 	Name = "LittleButtonsOnTheLeft",
+	InitCommand = function(self)
+		self:queuecommand("Set")
+	end,
+	SetCommand = function(self)
+		self:visible(not getenv("StatsOverlayActive"))
+	end,
+	StatsOverlayStateChangedMessageCommand = function(self)
+		self:queuecommand("Set")
+	end,
 
 	Def.Sprite {
 		Name = "PreviewViewerIcon",

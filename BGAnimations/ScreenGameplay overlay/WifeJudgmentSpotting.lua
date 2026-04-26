@@ -37,6 +37,7 @@ local highlight = getMainColor("highlight")
 local negative = getMainColor("negative")
 
 local jdgCounts = {} -- Child references for the judge counter
+local liveJudgeCounts = {}
 
 -- We can also pull in some localized aliases for workhorse functions for a modest speed increase
 local Round = notShit.round
@@ -290,6 +291,9 @@ local t =
 			tDiff = msg.WifePBDifferential
 		end
 		jdgCur = msg.Judgment
+		if jdgCur ~= nil and jdgct ~= nil then
+			liveJudgeCounts[jdgCur] = jdgct
+		end
 		self:playcommand("SpottedOffset")
 	end,
 	PracticeModeResetMessageCommand = function(self)
@@ -298,6 +302,7 @@ local t =
 		jdgct = 0
 		dvCur = nil
 		jdgCur = nil
+		liveJudgeCounts = {}
 		curMeanSum = 0
 		curMeanCount = 0
 		self:playcommand("SpottedOffset")
@@ -550,17 +555,12 @@ local maFontSize = 0.35
 --==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--==--
 
 local function getMARatio()
-	local ok, stats = pcall(function() return STATSMAN:GetCurStageStats() end)
-	if ok and stats and stats.GetPlayerStageStats then
-		local ok2, pss = pcall(function() return stats:GetPlayerStageStats(PLAYER_1) end)
-		if ok2 and pss and pss.GetTapNoteScore then
-			local w1 = pss:GetTapNoteScore("TapNoteScore_W1") or 0
-			local w2 = pss:GetTapNoteScore("TapNoteScore_W2") or 0
-			if w2 == 0 then return string.format("MA: %d", w1) end
-			return string.format("MA: %.2f", w1 / w2)
-		end
+	local w1 = liveJudgeCounts["TapNoteScore_W1"] or 0
+	local w2 = liveJudgeCounts["TapNoteScore_W2"] or 0
+	if w2 == 0 then
+		return string.format("%.2f:1", w1)
 	end
-	return "MA: 0.00"
+	return string.format("%.2f:1", w1 / w2)
 end
 
 local j =
@@ -628,13 +628,13 @@ end
 j[#j + 1] = LoadFont("Common Normal") .. {
 	Name = "MARatio",
 	InitCommand = function(self)
-		self:xy(0, -frameHeight / 2 + ((#jdgT + 1) * spacing)):zoom(maFontSize):halign(0.5):settext("MA: 0.00")
+		self:xy(0, -frameHeight / 2 + ((#jdgT + 1) * spacing)):zoom(maFontSize):halign(0.5):settext("0.00:1")
 	end,
 	SpottedOffsetCommand = function(self)
 		self:settext(getMARatio())
 	end,
 	PracticeModeResetMessageCommand = function(self)
-		self:settext("MA: 0.00")
+		self:settext("0.00:1")
 	end
 }
 

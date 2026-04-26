@@ -56,7 +56,7 @@ local plotScore = SCOREMAN:GetMostRecentScore() or SCOREMAN:GetTempReplayScore()
 local evalGraphSettings = {
 	lineMode = "Combo",
 	lineColor = "Clear Type",
-	lineOnTop = true,
+	scaleToWorstHit = false,
 	columnFilter = {},
 	scale = 100,
 	showTimingWindows = true,
@@ -87,7 +87,25 @@ local function mergeEvalGraphSettings(source)
 	end
 end
 
+local function loadPersistedEvalGraphSettings()
+	if not themeConfig or not themeConfig.get_data then return end
+	local config = themeConfig:get_data()
+	local globalConfig = config and config.global or nil
+	mergeEvalGraphSettings(globalConfig and globalConfig.EvalGraphSettings or nil)
+end
+
+local function getWorstHitOffset()
+	local worst = 0
+	for i = 1, #dvt do
+		if ntt[i] ~= "TapNoteType_Mine" then
+			worst = math.max(worst, math.abs(dvt[i] or 0))
+		end
+	end
+	return worst
+end
+
 local function refreshEvalGraphSettings()
+	loadPersistedEvalGraphSettings()
 	mergeEvalGraphSettings(_G.ResetDayEvalGraphSettings or {})
 	if evalGraphSettings.lineMode == "Standard deviation" then
 		evalGraphSettings.lineMode = "SD"
@@ -96,13 +114,19 @@ local function refreshEvalGraphSettings()
 		evalGraphSettings.lineColor = "Clear Type"
 	end
 	evalGraphSettings.onlyShowReleases = nil
+	evalGraphSettings.lineOnTop = nil
+	evalGraphSettings.scale = clamp(tonumber(evalGraphSettings.scale) or 100, 5, 100)
 	local columns = GAMESTATE:GetCurrentStyle() and GAMESTATE:GetCurrentStyle():ColumnsPerPlayer() or 4
 	for i = 1, columns do
 		if evalGraphSettings.columnFilter[i] == nil then
 			evalGraphSettings.columnFilter[i] = true
 		end
 	end
-	maxOffset = math.max(180, 180 * tso) * math.max(0.05, (evalGraphSettings.scale or 100) / 100)
+	if evalGraphSettings.scaleToWorstHit then
+		maxOffset = math.max(1, getWorstHitOffset())
+	else
+		maxOffset = math.max(180, 180 * tso) * math.max(0.05, (evalGraphSettings.scale or 100) / 100)
+	end
 end
 
 local function shouldDrawPoint(index)
@@ -147,16 +171,27 @@ local function getJudgeBucketForOffset(offset)
 	return 6
 end
 
+local function getWife3PercentForOffsets(offsets, totalTaps)
+	if type(getRescoredWife3Judge) ~= "function" then return nil end
+	return getRescoredWife3Judge(3, judge, {
+		dvt = offsets,
+		totalTaps = totalTaps or #offsets,
+		holdsMissed = 0,
+		minesHit = 0,
+	})
+end
+
 local function getLineColorAtState(running)
 	if evalGraphSettings.lineColor == "White" then
 		return {1, 1, 1, 1}
 	end
 	if evalGraphSettings.lineColor == "Grade" then
-		local total = running.count
-		local percent = total > 0 and ((running.w1 + running.w2 * 0.8 + running.w3 * 0.5) / total) or 0
+		local wifePercent = getWife3PercentForOffsets(running.offsets or {}, running.count)
+		local percent = wifePercent and (wifePercent / 100) or 0
 		return tableColor(getGradeColor(GetGradeFromPercent(percent)))
 	end
-	local grade = GetGradeFromPercent(math.max(0, math.min(1, (running.w1 + running.w2 * 0.8 + running.w3 * 0.5) / math.max(1, running.count))))
+	local wifePercent = getWife3PercentForOffsets(running.offsets or {}, running.count)
+	local grade = GetGradeFromPercent(math.max(0, math.min(1, (wifePercent or 0) / 100)))
 	local misscount = math.max(0, running.count - running.w1 - running.w2 - running.w3)
 	return tableColor(getClearTypeFromValues(grade, 1, running.w2, running.w3, misscount, 2))
 end
@@ -187,7 +222,13 @@ local function getSliceSummary(row, width)
 	local mean = total > 0 and (sum / total) or 0
 	local variance = total > 0 and math.max(0, (sumSquares / total) - (mean * mean)) or 0
 	local sd = math.sqrt(variance)
-	local accuracy = total > 0 and ((judgments.W1 + judgments.W2 * 0.8 + judgments.W3 * 0.5) / total) * 100 or 0
+	local sliceOffsets = {}
+	for i = 1, #nrt do
+		if nrt[i] and nrt[i] >= minRow and nrt[i] <= maxRow and shouldDrawPoint(i) then
+			sliceOffsets[#sliceOffsets + 1] = dvt[i] or 0
+		end
+	end
+	local accuracy = total > 0 and (getWife3PercentForOffsets(sliceOffsets, total) or 0) or 0
 	return {
 		judgments = judgments,
 		mean = mean,
@@ -318,6 +359,7 @@ local o = Def.ActorFrame {
 			wuab[i] = td:GetElapsedTimeFromNoteRow(nrt[i])
 		end
 
+		refreshEvalGraphSettings()
 		MESSAGEMAN:Broadcast("JudgeDisplayChanged") -- prim really handled all this much more elegantly
 	end,
 	SetFromDisplayMessageCommand = function(self, params)
@@ -683,17 +725,18 @@ local function getLineModeValue(index, running)
 	running.count = running.count + 1
 	running.sumOffset = running.sumOffset + (dvt[index] or 0)
 	running.sumSquares = running.sumSquares + ((dvt[index] or 0) * (dvt[index] or 0))
+	running.offsets[#running.offsets + 1] = dvt[index] or 0
 	if bucket == 1 then running.w1 = running.w1 + 1 end
 	if bucket == 2 then running.w2 = running.w2 + 1 end
 	if bucket == 3 then running.w3 = running.w3 + 1 end
-	if bucket <= 2 then running.combo = running.combo + 1 else running.combo = 0 end
+	if bucket <= 3 then running.combo = running.combo + 1 else running.combo = 0 end
 	if evalGraphSettings.lineMode == "Combo" then return running.combo end
 	if evalGraphSettings.lineMode == "Mean" then return running.sumOffset / math.max(1, running.count) end
 	if evalGraphSettings.lineMode == "SD" or evalGraphSettings.lineMode == "Standard deviation" then
 		local mean = running.sumOffset / math.max(1, running.count)
 		return math.sqrt(math.max(0, (running.sumSquares / math.max(1, running.count)) - (mean * mean)))
 	end
-	if evalGraphSettings.lineMode == "Accuracy" then return ((running.w1 + running.w2 * 0.8 + running.w3 * 0.5) / math.max(1, running.count)) * 100 end
+	if evalGraphSettings.lineMode == "Accuracy" then return getWife3PercentForOffsets(running.offsets, running.count) or 0 end
 	if evalGraphSettings.lineMode == "MA" then return running.w2 == 0 and running.w1 or (running.w1 / running.w2) end
 	if evalGraphSettings.lineMode == "PA" then return running.w3 == 0 and running.w2 or (running.w2 / running.w3) end
 	return nil
@@ -701,7 +744,7 @@ end
 
 local function buildLineVertices()
 	if evalGraphSettings.lineMode == "None" then return {} end
-	local running = {count = 0, combo = 0, sumOffset = 0, sumSquares = 0, w1 = 0, w2 = 0, w3 = 0}
+	local running = {count = 0, combo = 0, sumOffset = 0, sumSquares = 0, w1 = 0, w2 = 0, w3 = 0, offsets = {}}
 	local points = {}
 	local minValue, maxValue = nil, nil
 	for i = 1, #dvt do
@@ -737,7 +780,7 @@ o[#o + 1] = Def.ActorMultiVertex {
 		local verts = buildLineVertices()
 		self:SetVertices(verts)
 		self:SetDrawState {Mode = "DrawMode_LineStrip", First = 1, Num = #verts}
-		self:draworder(evalGraphSettings.lineOnTop and 105 or 5)
+		self:draworder(105)
 	end,
 	InitCommand = function(self)
 		self:visible(true)

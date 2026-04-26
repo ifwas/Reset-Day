@@ -310,7 +310,7 @@ local evalPlaylistPageSize = 8
 local evalGraphSettings = {
 	lineMode = "Combo",
 	lineColor = "Clear Type",
-	lineOnTop = true,
+	scaleToWorstHit = false,
 	columnFilter = {},
 	scale = 100,
 	showTimingWindows = true,
@@ -326,7 +326,8 @@ local function normalizeEvalGraphSettings()
 		evalGraphSettings.lineColor = "Clear Type"
 	end
 	evalGraphSettings.onlyShowReleases = nil
-	evalGraphSettings.scale = clamp(tonumber(evalGraphSettings.scale) or 100, 5, 300)
+	evalGraphSettings.lineOnTop = nil
+	evalGraphSettings.scale = clamp(tonumber(evalGraphSettings.scale) or 100, 5, 100)
 	evalGraphSettings.sliceWidth = clamp(math.floor(tonumber(evalGraphSettings.sliceWidth) or 4), 1, 12)
 end
 
@@ -1072,10 +1073,38 @@ local graphOverlayAdjustLeftX = 210
 local graphOverlayAdjustRightX = 242
 local graphOverlayColumnStartX = 154
 local graphOverlayColumnSpacing = 28
+local graphOverlayX = 18
+local graphOverlayY = 72
+
+local function isMouseOverGraphOverlay()
+	local x = INPUTFILTER:GetMouseX()
+	local y = INPUTFILTER:GetMouseY()
+	return x >= graphOverlayX and x <= graphOverlayX + graphOverlayWidth and y >= graphOverlayY and y <= graphOverlayY + graphOverlayHeight
+end
+
+local function evalGraphInput(event)
+	if evalOverlayOpen ~= "graph" then return end
+	if event.type ~= "InputEventType_FirstPress" then return end
+	if not event.DeviceInput then return end
+	if not isMouseOverGraphOverlay() then return end
+	if event.DeviceInput.button == "DeviceButton_mousewheel up" then
+		adjustGraphNumber("scale", 5, 5, 100)
+		return true
+	elseif event.DeviceInput.button == "DeviceButton_mousewheel down" then
+		adjustGraphNumber("scale", -5, 5, 100)
+		return true
+	end
+end
+
+t.BeginCommand = function()
+	SCREENMAN:GetTopScreen():AddInputCallback(evalGraphInput)
+	_G.ResetDayEvalGraphSettings = copyTable(evalGraphSettings)
+	MESSAGEMAN:Broadcast("EvalGraphSettingsChanged", {settings = copyTable(evalGraphSettings)})
+end
 
 local graphOverlay = Def.ActorFrame {
 	Name = "GraphOverlay",
-	InitCommand = function(self) self:xy(18, 72):visible(false) end,
+	InitCommand = function(self) self:xy(graphOverlayX, graphOverlayY):visible(false) end,
 	SetCommand = function(self)
 		self:visible(evalOverlayOpen == "graph")
 	end,
@@ -1123,9 +1152,9 @@ local graphOverlay = Def.ActorFrame {
 	},
 	dropdownFrame(graphOverlayValueX, 118, graphOverlayDropdownWidth, "lineColor", graphLineColors),
 	LoadFont("Common Large") .. {
-		InitCommand = function(self) self:xy(graphOverlayLabelX, 136):halign(0):valign(0.5):zoom(0.38):settext("Line on top:") end,
+		InitCommand = function(self) self:xy(graphOverlayLabelX, 136):halign(0):valign(0.5):zoom(0.38):settext("Scale to worst hit:") end,
 	},
-	tickButton(graphOverlayToggleX, 122, function() return evalGraphSettings.lineOnTop end, function() setGraphSetting("lineOnTop", not evalGraphSettings.lineOnTop) end),
+	tickButton(graphOverlayToggleX, 122, function() return evalGraphSettings.scaleToWorstHit end, function() setGraphSetting("scaleToWorstHit", not evalGraphSettings.scaleToWorstHit) end),
 	LoadFont("Common Large") .. {
 		InitCommand = function(self) self:xy(graphOverlayLabelX, 170):halign(0):valign(0.5):zoom(0.38):settext("Column filter:") end,
 	},
@@ -1137,9 +1166,9 @@ local graphOverlay = Def.ActorFrame {
 		SetCommand = function(self) self:settext(string.format("%d%%", evalGraphSettings.scale)) end,
 		EvalOverlayStateChangedMessageCommand = function(self) self:queuecommand("Set") end,
 	},
-	UIElements.QuadButton(1, 1) .. { InitCommand = function(self) self:xy(graphOverlayAdjustLeftX, 202):zoomto(18, 18):halign(0):valign(0):diffusealpha(0) end, MouseDownCommand = function(self, params) if params.event == "DeviceButton_left mouse button" then adjustGraphNumber("scale", -5, 5, 300) end end },
+	UIElements.QuadButton(1, 1) .. { InitCommand = function(self) self:xy(graphOverlayAdjustLeftX, 202):zoomto(18, 18):halign(0):valign(0):diffusealpha(0) end, MouseDownCommand = function(self, params) if params.event == "DeviceButton_left mouse button" then adjustGraphNumber("scale", -5, 5, 100) end end },
 	LoadFont("Common Large") .. { InitCommand = function(self) self:xy(graphOverlayAdjustLeftX + 9, 211):halign(0.5):valign(0.5):zoom(0.32):settext("-") end },
-	UIElements.QuadButton(1, 1) .. { InitCommand = function(self) self:xy(graphOverlayAdjustRightX, 202):zoomto(18, 18):halign(0):valign(0):diffusealpha(0) end, MouseDownCommand = function(self, params) if params.event == "DeviceButton_left mouse button" then adjustGraphNumber("scale", 5, 5, 300) end end },
+	UIElements.QuadButton(1, 1) .. { InitCommand = function(self) self:xy(graphOverlayAdjustRightX, 202):zoomto(18, 18):halign(0):valign(0):diffusealpha(0) end, MouseDownCommand = function(self, params) if params.event == "DeviceButton_left mouse button" then adjustGraphNumber("scale", 5, 5, 100) end end },
 	LoadFont("Common Large") .. { InitCommand = function(self) self:xy(graphOverlayAdjustRightX + 9, 211):halign(0.5):valign(0.5):zoom(0.32):settext("+") end },
 	LoadFont("Common Large") .. {
 		InitCommand = function(self) self:xy(graphOverlayLabelX, 248):halign(0):valign(0.5):zoom(0.38):settext("Show timing windows:") end,
