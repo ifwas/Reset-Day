@@ -5,6 +5,10 @@ local lastsearchstring = ""
 local instantSearch = themeConfig:get_data().global.InstantSearch
 
 local interludeIconTargetSize = 48
+local searchBarX = SCREEN_WIDTH - 420
+local searchBarY = 70
+local searchBarWidth = 410
+local searchBarHeight = 35
 
 local function normalizeInterludeIcon(self)
 	local width = self:GetWidth()
@@ -14,33 +18,59 @@ local function normalizeInterludeIcon(self)
 	end
 end
 
+local function pointInSearchBar(x, y)
+	return x >= searchBarX and x <= searchBarX + searchBarWidth and y >= searchBarY - searchBarHeight / 2 and y <= searchBarY + searchBarHeight / 2
+end
+
 local function getSearchDisplayState()
 	if active then
 		return searchstring .. "_", color("#00FF00")
 	elseif searchstring ~= "" then
 		return searchstring, color("#FFFFFF")
 	end
-	return "Press Tab to search", color("#888888")
+	return "Click or press Tab to search", color("#888888")
+end
+
+local function beginSearch()
+	active = true
+	MESSAGEMAN:Broadcast("BeginningSearch")
+	whee:Move(0)
+	SCREENMAN:set_input_redirected(PLAYER_1, true)
+	MESSAGEMAN:Broadcast("RefreshSearchResults")
+	MESSAGEMAN:Broadcast("UpdateString")
+end
+
+local function endSearch()
+	if not instantSearch then
+		whee:SongSearch(searchstring)
+	end
+	active = false
+	SCREENMAN:set_input_redirected(PLAYER_1, false)
+	MESSAGEMAN:Broadcast("EndingSearch")
+	MESSAGEMAN:Broadcast("UpdateString")
 end
 
 local function searchInput(event)
-	if event.type == "InputEventType_FirstPress" and event.DeviceInput.button == "DeviceButton_tab" then
+	local deviceButton = event.DeviceInput and event.DeviceInput.button or ""
+
+	if event.type == "InputEventType_FirstPress" and deviceButton == "DeviceButton_left mouse button" and pointInSearchBar(INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()) then
+		if not active then
+			beginSearch()
+		end
+		return true
+	end
+
+	if event.type == "InputEventType_FirstPress" and deviceButton == "DeviceButton_tab" then
 		active = not active
 		if active then
-			MESSAGEMAN:Broadcast("BeginningSearch")
-			whee:Move(0)
-			SCREENMAN:set_input_redirected(PLAYER_1, true)
-			MESSAGEMAN:Broadcast("RefreshSearchResults")
+			beginSearch()
 		else
-			SCREENMAN:set_input_redirected(PLAYER_1, false)
-			MESSAGEMAN:Broadcast("EndingSearch")
+			endSearch()
 		end
-		MESSAGEMAN:Broadcast("UpdateString")
 		return true
 	end
 
 	if event.type ~= "InputEventType_Release" and active == true then
-		local deviceButton = event.DeviceInput and event.DeviceInput.button or ""
 		if event.button == "Back" then
 			searchstring = ""
 			whee:SongSearch(searchstring)
@@ -48,12 +78,7 @@ local function searchInput(event)
 			SCREENMAN:set_input_redirected(PLAYER_1, false)
 			MESSAGEMAN:Broadcast("EndingSearch")
 		elseif event.button == "Start" or deviceButton == "DeviceButton_enter" then
-			if not instantSearch then
-				whee:SongSearch(searchstring)
-			end
-			active = false
-			SCREENMAN:set_input_redirected(PLAYER_1, false)
-			MESSAGEMAN:Broadcast("EndingSearch")
+			endSearch()
 		elseif event.DeviceInput.button == "DeviceButton_space" then
 			searchstring = searchstring .. " "
 		elseif event.DeviceInput.button == "DeviceButton_backspace" then
@@ -86,7 +111,7 @@ local t = Def.ActorFrame {
 	end,
 	Def.Quad {
 		InitCommand = function(self)
-			self:xy(SCREEN_WIDTH - 420, 70):zoomto(410, 35):halign(0):diffuse(color("#000000")):diffusealpha(0.5)
+			self:xy(searchBarX, searchBarY):zoomto(searchBarWidth, searchBarHeight):halign(0):diffuse(color("#000000")):diffusealpha(0.5)
 		end,
 		SetDynamicAccentColorMessageCommand = function(self, params)
 			self:finishtweening():linear(0.2):diffuse(params.color):diffusealpha(0.3)

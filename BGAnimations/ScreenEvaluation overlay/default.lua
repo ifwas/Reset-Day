@@ -274,11 +274,14 @@ local function tryPlayReplay(score)
 	if not score then return false end
 	local top = SCREENMAN:GetTopScreen()
 	if top and top.PlayReplay then
-		top:PlayReplay(score)
-		return true
-	elseif top and top.GetName and top:GetName() == "ScreenEvaluation" then
+		local ok = pcall(function() top:PlayReplay(score) end)
+		if ok then
+			return true
+		end
+	end
+	if top and top.GetName and top:GetName() == "ScreenEvaluation" then
 		setenv("PendingReplayScoreFromEvaluation", score)
-		continueToSongSelect()
+		SCREENMAN:SetNewScreen("ScreenSelectMusic")
 		return true
 	end
 	ms.ok("Replay playback is not available from this screen.")

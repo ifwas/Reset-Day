@@ -25,6 +25,9 @@ local function cursorCheck()
 end
 
 local t = Def.ActorFrame{
+    InitCommand = function(self)
+        self:draworder(999999)
+    end,
     OnCommand = function(self)
 		self:SetUpdateFunction(UpdateLoop)
         self:SetUpdateFunctionInterval(1 / DISPLAY:GetDisplayRefreshRate())

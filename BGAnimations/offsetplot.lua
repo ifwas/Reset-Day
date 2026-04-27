@@ -94,6 +94,15 @@ local function loadPersistedEvalGraphSettings()
 	mergeEvalGraphSettings(globalConfig and globalConfig.EvalGraphSettings or nil)
 end
 
+local function persistEvalGraphSettings()
+	if not themeConfig or not themeConfig.get_data then return end
+	local config = themeConfig:get_data()
+	config.global = config.global or {}
+	config.global.EvalGraphSettings = copyTable(evalGraphSettings)
+	themeConfig:set_dirty()
+	themeConfig:save()
+end
+
 local function getWorstHitOffset()
 	local worst = 0
 	for i = 1, #dvt do
@@ -127,6 +136,35 @@ local function refreshEvalGraphSettings()
 	else
 		maxOffset = math.max(180, 180 * tso) * math.max(0.05, (evalGraphSettings.scale or 100) / 100)
 	end
+end
+
+local offsetPlotActor
+
+local function broadcastEvalGraphSettings()
+	_G.ResetDayEvalGraphSettings = copyTable(evalGraphSettings)
+	refreshEvalGraphSettings()
+	persistEvalGraphSettings()
+	_G.ResetDayEvalGraphSettings = copyTable(evalGraphSettings)
+	MESSAGEMAN:Broadcast("EvalGraphSettingsChanged", {settings = copyTable(evalGraphSettings)})
+end
+
+local function offsetPlotInput(event)
+	if not useEvaluationLayout then return false end
+	if not offsetPlotActor then return false end
+	if event.type ~= "InputEventType_FirstPress" then return false end
+	if not event.DeviceInput then return false end
+	local bg = offsetPlotActor:GetChild("BGQuad")
+	if not bg or not isOver(bg) then return false end
+	if event.DeviceInput.button == "DeviceButton_mousewheel up" then
+		evalGraphSettings.scale = clamp((tonumber(evalGraphSettings.scale) or 100) + 5, 5, 100)
+		broadcastEvalGraphSettings()
+		return true
+	elseif event.DeviceInput.button == "DeviceButton_mousewheel down" then
+		evalGraphSettings.scale = clamp((tonumber(evalGraphSettings.scale) or 100) - 5, 5, 100)
+		broadcastEvalGraphSettings()
+		return true
+	end
+	return false
 end
 
 local function shouldDrawPoint(index)
@@ -299,6 +337,10 @@ end
 
 local o = Def.ActorFrame {
 	Name = "OffsetPlot",
+	BeginCommand = function(self)
+		offsetPlotActor = self
+		SCREENMAN:GetTopScreen():AddInputCallback(offsetPlotInput)
+	end,
 	OnCommand = function(self)
 		refreshEvalGraphSettings()
 		self:xy(plotX, plotY)

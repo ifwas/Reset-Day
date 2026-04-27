@@ -1218,6 +1218,7 @@ local function input(event)
 	end
 	if statsOverlayActive and deviceButton == "DeviceButton_left mouse button" then
 		if event.type == "InputEventType_FirstPress" then
+			MESSAGEMAN:Broadcast("MouseDown", {event = event})
 			local mouseX = INPUTFILTER:GetMouseX()
 			local mouseY = INPUTFILTER:GetMouseY()
 			if pointInBox(mouseX, mouseY, overlayCloseButtonX, overlayCloseButtonY, overlayCloseButtonHalfWidth, overlayCloseButtonHalfHeight) then
@@ -1253,6 +1254,9 @@ local function input(event)
 					end
 				end
 			end
+		elseif event.type == "InputEventType_Release" then
+			MESSAGEMAN:Broadcast("MouseLeftClick")
+			MESSAGEMAN:Broadcast("MouseUp", {event = event})
 		end
 		return true
 	end
@@ -2003,15 +2007,15 @@ local statsOverlay = Def.ActorFrame {
 		self:GetChild("RightPaneLeaderboards"):visible(statsOverlayTab == statsOverlayTabs.Leaderboards)
 		self:GetChild("LeftPaneOverall"):visible(isStatsOverlayOverallTab())
 		self:GetChild("LeftPaneLeaderboards"):visible(isStatsOverlayLeaderboardsTab())
+		for i = 1, 8 do
+			self:GetChild("OverallSkillset" .. i):playcommand("Set")
+		end
 		if isStatsOverlayOverallTab() then
 			refreshOverallDerivedData()
 			overallProfileSummary = getOverallProfileSummary()
 			overallBestScoresForDisplay = getOverallBestScores()
 			local rightPaneOverall = self:GetChild("RightPaneOverall")
 			self:GetChild("LeftPaneOverall"):playcommand("Set")
-			for i = 1, 8 do
-				self:GetChild("OverallSkillset" .. i):playcommand("Set")
-			end
 			rightPaneOverall:GetChild("OverallOverviewHeader"):playcommand("Set")
 			rightPaneOverall:GetChild("OverallOverviewEmpty"):playcommand("Set")
 			rightPaneOverall:GetChild("OverallTimelineGraphBackdrop"):playcommand("Set")
