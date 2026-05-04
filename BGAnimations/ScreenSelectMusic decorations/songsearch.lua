@@ -35,7 +35,6 @@ local function beginSearch()
 	active = true
 	MESSAGEMAN:Broadcast("BeginningSearch")
 	whee:Move(0)
-	SCREENMAN:set_input_redirected(PLAYER_1, true)
 	MESSAGEMAN:Broadcast("RefreshSearchResults")
 	MESSAGEMAN:Broadcast("UpdateString")
 end
@@ -45,13 +44,28 @@ local function endSearch()
 		whee:SongSearch(searchstring)
 	end
 	active = false
-	SCREENMAN:set_input_redirected(PLAYER_1, false)
 	MESSAGEMAN:Broadcast("EndingSearch")
 	MESSAGEMAN:Broadcast("UpdateString")
 end
 
 local function searchInput(event)
 	local deviceButton = event.DeviceInput and event.DeviceInput.button or ""
+	if event.type == "InputEventType_FirstPress" and deviceButton == "DeviceButton_left mouse button" and getenv("StatsOverlayActive") then
+		return false
+	end
+	if event.type == "InputEventType_FirstPress" and deviceButton == "DeviceButton_left mouse button" and getenv("SuppressSongSearchClick") then
+		setenv("SuppressSongSearchClick", false)
+		return false
+	end
+
+	if event.type == "InputEventType_FirstPress" and active and (deviceButton == "DeviceButton_left mouse button" or deviceButton == "DeviceButton_right mouse button") then
+		endSearch()
+		return false
+	end
+
+	if event.type == "InputEventType_FirstPress" and active and (deviceButton == "DeviceButton_mousewheel up" or deviceButton == "DeviceButton_mousewheel down") then
+		return false
+	end
 
 	if event.type == "InputEventType_FirstPress" and deviceButton == "DeviceButton_left mouse button" and pointInSearchBar(INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()) then
 		if not active then
@@ -75,7 +89,6 @@ local function searchInput(event)
 			searchstring = ""
 			whee:SongSearch(searchstring)
 			active = false
-			SCREENMAN:set_input_redirected(PLAYER_1, false)
 			MESSAGEMAN:Broadcast("EndingSearch")
 		elseif event.button == "Start" or deviceButton == "DeviceButton_enter" then
 			endSearch()

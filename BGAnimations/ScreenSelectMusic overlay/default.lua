@@ -1205,7 +1205,11 @@ local function input(event)
 		return true
 	end
 	if statsOverlayActive and event.type == "InputEventType_FirstPress" then
-		if event.button == "Back" or deviceButton == "DeviceButton_right mouse button" then
+		if event.button == "Back"
+			or deviceButton == "DeviceButton_right mouse button"
+			or deviceButton == "DeviceButton_x"
+			or deviceButton == "DeviceButton_escape"
+		then
 			setStatsOverlayActive(false)
 			return true
 		elseif deviceButton == "DeviceButton_mousewheel up" then
@@ -1218,10 +1222,16 @@ local function input(event)
 	end
 	if statsOverlayActive and deviceButton == "DeviceButton_left mouse button" then
 		if event.type == "InputEventType_FirstPress" then
-			MESSAGEMAN:Broadcast("MouseDown", {event = event})
+			MESSAGEMAN:Broadcast("MouseDown", {
+				event = deviceButton,
+				MouseX = INPUTFILTER:GetMouseX(),
+				MouseY = INPUTFILTER:GetMouseY(),
+				InputEvent = event
+			})
 			local mouseX = INPUTFILTER:GetMouseX()
 			local mouseY = INPUTFILTER:GetMouseY()
 			if pointInBox(mouseX, mouseY, overlayCloseButtonX, overlayCloseButtonY, overlayCloseButtonHalfWidth, overlayCloseButtonHalfHeight) then
+				setenv("SuppressSongSearchClick", true)
 				setStatsOverlayActive(false)
 			else
 				local selectedTab = getStatsOverlayTabAtPosition(mouseX, mouseY)
@@ -1256,7 +1266,18 @@ local function input(event)
 			end
 		elseif event.type == "InputEventType_Release" then
 			MESSAGEMAN:Broadcast("MouseLeftClick")
-			MESSAGEMAN:Broadcast("MouseUp", {event = event})
+			local mouseX = INPUTFILTER:GetMouseX()
+			local mouseY = INPUTFILTER:GetMouseY()
+			if pointInBox(mouseX, mouseY, overlayCloseButtonX, overlayCloseButtonY, overlayCloseButtonHalfWidth, overlayCloseButtonHalfHeight) then
+				setenv("SuppressSongSearchClick", true)
+				setStatsOverlayActive(false)
+			end
+			MESSAGEMAN:Broadcast("MouseUp", {
+				event = deviceButton,
+				MouseX = mouseX,
+				MouseY = mouseY,
+				InputEvent = event
+			})
 		end
 		return true
 	end
@@ -1266,16 +1287,36 @@ local function input(event)
 	if deviceButton == "DeviceButton_left mouse button" then 
 		if event.type == "InputEventType_Release" then
 			MESSAGEMAN:Broadcast("MouseLeftClick")
-			MESSAGEMAN:Broadcast("MouseUp", {event = event})
+			MESSAGEMAN:Broadcast("MouseUp", {
+				event = deviceButton,
+				MouseX = INPUTFILTER:GetMouseX(),
+				MouseY = INPUTFILTER:GetMouseY(),
+				InputEvent = event
+			})
 		elseif event.type == "InputEventType_FirstPress" then
-			MESSAGEMAN:Broadcast("MouseDown", {event = event})
+			MESSAGEMAN:Broadcast("MouseDown", {
+				event = deviceButton,
+				MouseX = INPUTFILTER:GetMouseX(),
+				MouseY = INPUTFILTER:GetMouseY(),
+				InputEvent = event
+			})
 		end
 	elseif deviceButton == "DeviceButton_right mouse button" then
 		if event.type == "InputEventType_Release" then
 			MESSAGEMAN:Broadcast("MouseRightClick")
-			MESSAGEMAN:Broadcast("MouseUp", {event = event})
+			MESSAGEMAN:Broadcast("MouseUp", {
+				event = deviceButton,
+				MouseX = INPUTFILTER:GetMouseX(),
+				MouseY = INPUTFILTER:GetMouseY(),
+				InputEvent = event
+			})
 		elseif event.type == "InputEventType_FirstPress" then
-			MESSAGEMAN:Broadcast("MouseDown", {event = event})
+			MESSAGEMAN:Broadcast("MouseDown", {
+				event = deviceButton,
+				MouseX = INPUTFILTER:GetMouseX(),
+				MouseY = INPUTFILTER:GetMouseY(),
+				InputEvent = event
+			})
 		end
 	end
 	return false
@@ -2924,9 +2965,6 @@ t[#t + 1] = Def.Actor {
 	end,
 	EndCommand = function(self)
 		pendingMenuMusicRestore = false
-		if MenuMusicState and MenuMusicState.CaptureFromTopScreen then
-			MenuMusicState.CaptureFromTopScreen(SCREENMAN:GetTopScreen())
-		end
 		if statsOverlayActive then
 			SCREENMAN:set_input_redirected(PLAYER_1, statsOverlayInputRedirect)
 			statsOverlayActive = false
